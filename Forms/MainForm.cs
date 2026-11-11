@@ -27,6 +27,8 @@ public class MainForm : Form
     // 全螢幕工作區
     private readonly FullScreenSidebar _sidebar = new() { Visible = false };
     private readonly Button _sidebarHandle = new();
+    private bool _handleDragging, _handleMoved;
+    private int _handleDownScreenY, _handleStartTop;
     private readonly System.Windows.Forms.Timer _edgeTimer = new() { Interval = 100 };
     private bool _fullScreen;
     private bool _fsTransition;
@@ -388,8 +390,40 @@ public class MainForm : Form
         _sidebarHandle.Cursor = Cursors.Hand;
         _sidebarHandle.TabStop = false;
         _sidebarHandle.Visible = false;
-        _sidebarHandle.Click += (_, _) => ExpandSidebar();
-        new ToolTip().SetToolTip(_sidebarHandle, "展開工作階段面板");
+        // 點一下展開面板;上下拖曳可移動位置 (避免擋住遠端畫面上的視窗),位置會記住
+        _sidebarHandle.MouseDown += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Left) return;
+            _handleDragging = true;
+            _handleMoved = false;
+            _handleDownScreenY = _sidebarHandle.PointToScreen(e.Location).Y;
+            _handleStartTop = _sidebarHandle.Top;
+        };
+        _sidebarHandle.MouseMove += (_, e) =>
+        {
+            if (!_handleDragging) return;
+            int dy = _sidebarHandle.PointToScreen(e.Location).Y - _handleDownScreenY;
+            if (!_handleMoved && Math.Abs(dy) < LogicalToDeviceUnits(4)) return;
+            _handleMoved = true;
+            _sidebarHandle.Cursor = Cursors.SizeNS;
+            _sidebarHandle.Top = Math.Clamp(_handleStartTop + dy, 0, Math.Max(0, ClientSize.Height - _sidebarHandle.Height));
+        };
+        _sidebarHandle.MouseUp += (_, _) =>
+        {
+            if (!_handleDragging) return;
+            _handleDragging = false;
+            _sidebarHandle.Cursor = Cursors.Hand;
+            if (!_handleMoved || ClientSize.Height <= 0) return;
+            _store.Settings.SidebarHandlePosition =
+                Math.Clamp((_sidebarHandle.Top + _sidebarHandle.Height / 2.0) / ClientSize.Height, 0, 1);
+            try { _store.SaveSettings(); } catch { /* ignore */ }
+        };
+        _sidebarHandle.Click += (_, _) =>
+        {
+            if (_handleMoved) { _handleMoved = false; return; } // 剛拖曳完,不展開
+            ExpandSidebar();
+        };
+        new ToolTip().SetToolTip(_sidebarHandle, "點一下展開工作階段面板\n上下拖曳可移動位置");
 
         _sidebar.SessionClicked += p =>
         {
@@ -537,7 +571,8 @@ public class MainForm : Form
         _sidebar.SetPinned(pinned);
 
         int hw = LogicalToDeviceUnits(14), hh = LogicalToDeviceUnits(64);
-        _sidebarHandle.SetBounds(0, (cs.Height - hh) / 2, hw, hh);
+        int center = (int)(cs.Height * Math.Clamp(_store.Settings.SidebarHandlePosition, 0, 1));
+        _sidebarHandle.SetBounds(0, Math.Clamp(center - hh / 2, 0, Math.Max(0, cs.Height - hh)), hw, hh);
         _sidebarHandle.Visible = !_sidebar.Visible;
 
         _sidebar.BringToFront();

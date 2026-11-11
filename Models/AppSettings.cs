@@ -35,6 +35,8 @@ public class AppSettings
     public bool SidebarPinned { get; set; }
     /// <summary>滑鼠移到螢幕左緣時自動展開側邊面板</summary>
     public bool SidebarHoverExpand { get; set; } = true;
+    /// <summary>全螢幕左側小把手的垂直位置 (0 = 最上方、0.5 = 中間、1 = 最下方)</summary>
+    public double SidebarHandlePosition { get; set; } = 0.5;
 
     // 視窗狀態
     public int WindowX { get; set; } = -1;
