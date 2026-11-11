@@ -40,7 +40,7 @@ $html = @"
   <img src="images/icon-256.png" alt="">
   <div class="t">RDP 遠端連線管理員</div>
   <div class="s">使用手冊</div>
-  <div class="s" style="font-size:12pt;color:#57606a">版本 1.3.0</div>
+  <div class="s" style="font-size:12pt;color:#57606a">版本 1.4.0</div>
   <div class="c">鴻森智能科技股份有限公司<br>Copyright © 2026 All rights reserved.</div>
 </div>
 $body

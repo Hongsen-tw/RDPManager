@@ -47,10 +47,10 @@ public static class VncLauncher
         if (c.SmartSizing || c.ScreenMode != ScreenMode.Custom) args.Add("/autoscaling");
         if (c.VncViewOnly) args.Add("/viewonly");
         if (!c.RedirectClipboard) args.Add("/disableclipboard");
-        if (!string.IsNullOrWhiteSpace(c.Username))
+        if (!string.IsNullOrWhiteSpace(c.VncUsername))
         {
             args.Add("/user");
-            args.Add(c.FullUserName); // UltraVNC MS-Logon 帳號
+            args.Add(c.VncUsername.Trim()); // UltraVNC MS-Logon 帳號 (與 RDP 帳號分開)
         }
         if (!string.IsNullOrEmpty(password))
         {
@@ -61,7 +61,7 @@ public static class VncLauncher
         args.Add("10");
         var host = c.Host.Trim();
         if (host.Contains(':') && !host.StartsWith('[')) host = $"[{host}]";
-        args.Add($"{host}::{c.Port}");
+        args.Add($"{host}::{c.VncPortValue}");
         return args;
     }
 

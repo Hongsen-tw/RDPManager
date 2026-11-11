@@ -20,16 +20,17 @@ public class PasswordPromptForm : Form
     public bool Remember => _allowRemember && _chkRemember.Checked;
     private readonly bool _allowRemember;
 
-    public PasswordPromptForm(RdpConnection c, bool allowRemember)
+    /// <param name="vnc">true = 詢問 VNC 密碼 (帳號為 MS-Logon,選填)</param>
+    public PasswordPromptForm(RdpConnection c, bool allowRemember, bool vnc = false)
     {
         _allowRemember = allowRemember;
-        SetupDialog(this, $"連線到 {c.Name}", new Size(440, 260));
+        SetupDialog(this, $"{(vnc ? "VNC" : "RDP")} 連線到 {c.Name}", new Size(440, 260));
         TopMost = true; // 全螢幕時也要顯示在最上層
 
         var t = NewTable();
         var title = new Label
         {
-            Text = $"{c.Name}\n{c.ProtocolName} · {c.DisplayAddress}", AutoSize = true,
+            Text = $"{c.Name}\n{(vnc ? $"VNC · {c.VncAddress}" : $"RDP · {c.RdpAddress}")}", AutoSize = true,
             Font = new Font(UiFont, FontStyle.Bold), Margin = new Padding(3, 0, 3, 8),
         };
         AddFull(t, title);
@@ -46,8 +47,8 @@ public class PasswordPromptForm : Form
         _chkRemember.Visible = allowRemember;
         _chkShow.CheckedChanged += (_, _) => _txtPassword.UseSystemPasswordChar = !_chkShow.Checked;
         _chkRemember.CheckedChanged += (_, _) => note.Visible = !_chkRemember.Checked;
-        _txtUser.Text = c.FullUserName;
-        _txtUser.PlaceholderText = c.IsVnc ? "VNC 通常不需要 (MS-Logon 才需要)" : "例如 administrator 或 DOMAIN\\user";
+        _txtUser.Text = vnc ? c.VncUsername : c.FullUserName;
+        _txtUser.PlaceholderText = vnc ? "VNC 通常不需要 (MS-Logon 才需要)" : "例如 administrator 或 DOMAIN\\user";
 
         var buttons = DialogButtons(this, out _, out _, "連線");
         Controls.Add(t);
@@ -55,7 +56,7 @@ public class PasswordPromptForm : Form
         Shown += (_, _) =>
         {
             Activate();
-            (_txtUser.Text.Length == 0 && !c.IsVnc ? _txtUser : _txtPassword).Focus();
+            (_txtUser.Text.Length == 0 && !vnc ? _txtUser : _txtPassword).Focus();
         };
     }
 

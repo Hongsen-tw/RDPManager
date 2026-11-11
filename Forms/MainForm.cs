@@ -96,9 +96,10 @@ public class MainForm : Form
     /// <summary>連線相關選單項目 (主選單與右鍵選單共用,所以每次產生新的)</summary>
     private ToolStripItem[] ConnectionItems(bool withShortcuts) => new ToolStripItem[]
     {
-        Item("連線(&C)", Keys.None, (_, _) => ConnectSelected(), "Enter"),
-        Item("在內嵌分頁連線", Keys.None, (_, _) => ConnectSelected(LaunchMode.Embedded)),
-        Item("以外部 mstsc 連線", withShortcuts ? Keys.Control | Keys.Shift | Keys.Enter : Keys.None, (_, _) => ConnectSelected(LaunchMode.External)),
+        Item("連線 (預設類型)(&C)", Keys.None, (_, _) => ConnectSelected(), "Enter"),
+        Item("以 RDP 連線 (內嵌分頁)", Keys.None, (_, _) => ConnectSelected(LaunchMode.Embedded)),
+        Item("以 RDP 連線 (外部 mstsc)", withShortcuts ? Keys.Control | Keys.Shift | Keys.Enter : Keys.None, (_, _) => ConnectSelected(LaunchMode.External)),
+        Item("以 VNC 連線 (UltraVNC)(&V)", withShortcuts ? Keys.Control | Keys.Shift | Keys.V : Keys.None, (_, _) => ConnectSelected(protocol: ConnectionProtocol.Vnc)),
         new ToolStripSeparator(),
         Item("編輯(&E)...", withShortcuts ? Keys.Control | Keys.E : Keys.None, (_, _) => EditSelected()),
         Item("建立複本(&D)", withShortcuts ? Keys.Control | Keys.D : Keys.None, (_, _) => DuplicateSelected()),
@@ -218,6 +219,7 @@ public class MainForm : Form
             new ToolStripSeparator(),
             Btn("▶ 連線", "連線 (Enter / 雙擊)", (_, _) => ConnectSelected()),
             Btn("⧉ 外部 mstsc", "以 Windows 遠端桌面視窗開啟 (Ctrl+Shift+Enter)", (_, _) => ConnectSelected(LaunchMode.External)),
+            Btn("🖵 VNC", "以 VNC 連線 (UltraVNC Viewer) (Ctrl+Shift+V)", (_, _) => ConnectSelected(protocol: ConnectionProtocol.Vnc)),
             Btn("⛶ 全螢幕", "目前的工作階段切換到全螢幕 (F11)", (_, _) => EnterFullScreen()),
             new ToolStripSeparator(),
             Btn("⟳ 檢查狀態", "檢查所有主機是否在線上 (F5)", async (_, _) => await CheckStatusAsync(_store.Connections)),
@@ -394,9 +396,9 @@ public class MainForm : Form
             _tabs.SelectedTab = p;
             AfterSidebarAction();
         };
-        _sidebar.ConnectRequested += c =>
+        _sidebar.ConnectRequested += (c, protocol) =>
         {
-            Connect(c);
+            Connect(c, LaunchMode.Default, protocol);
             AfterSidebarAction();
         };
         _sidebar.PinToggled += () =>
@@ -591,7 +593,7 @@ public class MainForm : Form
         {
             var area = _sidebar.RectangleToScreen(_sidebar.ClientRectangle);
             area.Inflate(LogicalToDeviceUnits(24), 0);
-            if (area.Contains(pos) || _sidebar.ContainsFocus) { _leaveSince = null; return; }
+            if (area.Contains(pos) || _sidebar.ContainsFocus || _sidebar.MenuOpen) { _leaveSince = null; return; }
             _leaveSince ??= now;
             if ((now - _leaveSince.Value).TotalMilliseconds >= 600) CollapseSidebar();
         }
@@ -999,7 +1001,7 @@ public class MainForm : Form
         if (idx >= 0) _store.Connections[idx] = copy;
         SaveAndRefresh(new[] { copy.Id });
         SetMessage($"已更新「{copy.Name}」");
-        if (copy.Host != c.Host || copy.Port != c.Port) _ = CheckStatusAsync(new[] { copy });
+        if (copy.Host != c.Host || copy.ActivePort != c.ActivePort) _ = CheckStatusAsync(new[] { copy });
     }
 
     private void DuplicateSelected()
@@ -1116,12 +1118,13 @@ public class MainForm : Form
     // 連線
     // =====================================================================
 
-    private void ConnectSelected(LaunchMode force = LaunchMode.Default)
+    /// <param name="protocol">null = 使用連線的預設連線類型</param>
+    private void ConnectSelected(LaunchMode force = LaunchMode.Default, ConnectionProtocol? protocol = null)
     {
         var sel = SelectedConnections();
         if (sel.Count > 5 && MessageBox.Show(this, $"確定要同時開啟 {sel.Count} 個連線?", "連線",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-        foreach (var c in sel) Connect(c, force);
+        foreach (var c in sel) Connect(c, force, protocol);
     }
 
     private void ConnectAllInView()
@@ -1143,21 +1146,26 @@ public class MainForm : Form
             return;
         }
         var saved = _store.Connections.FirstOrDefault(c =>
-            c.Host.Equals(host, StringComparison.OrdinalIgnoreCase) && c.Port == port && c.Protocol == protocol);
-        var conn = saved ?? new RdpConnection { Protocol = protocol, Host = host, Port = port };
+            c.Host.Equals(host, StringComparison.OrdinalIgnoreCase) && (vnc ? c.VncPortValue == port : c.Port == port));
+        var conn = saved ?? (vnc
+            ? new RdpConnection { Protocol = protocol, Host = host, VncPort = port }
+            : new RdpConnection { Protocol = protocol, Host = host, Port = port });
         if (saved == null) conn.Name = (vnc ? "VNC " : "") + conn.DisplayAddress;
-        Connect(conn);
+        Connect(conn, LaunchMode.Default, protocol);
         _txtQuick.Clear();
         if (saved == null && !vnc) SetMessage("快速連線不會自動儲存,可在分頁上按右鍵「儲存為連線」。");
     }
 
-    private void Connect(RdpConnection c, LaunchMode force = LaunchMode.Default)
+    /// <param name="force">指定 RDP 的內嵌 / 外部方式 (指定時一律用 RDP)</param>
+    /// <param name="protocol">指定 RDP 或 VNC;null = 使用連線的預設連線類型</param>
+    private void Connect(RdpConnection c, LaunchMode force = LaunchMode.Default, ConnectionProtocol? protocol = null)
     {
         if (string.IsNullOrWhiteSpace(c.Host)) return;
+        bool vnc = (protocol ?? (force != LaunchMode.Default ? ConnectionProtocol.Rdp : c.Protocol)) == ConnectionProtocol.Vnc;
 
         // VNC:以外部 UltraVNC Viewer 開啟,先確認已安裝 (避免輸入密碼後才發現無法開啟)
         string? vncViewer = null;
-        if (c.IsVnc)
+        if (vnc)
         {
             vncViewer = VncLauncher.Resolve(_store.Settings.UltraVncPath);
             if (vncViewer == null)
@@ -1172,7 +1180,7 @@ public class MainForm : Form
                  : _store.Settings.DefaultLaunchMode;
         if (mode == LaunchMode.Default) mode = LaunchMode.Embedded;
 
-        if (!c.IsVnc && mode == LaunchMode.Embedded && _store.Settings.ReuseOpenSession)
+        if (!vnc && mode == LaunchMode.Embedded && _store.Settings.ReuseOpenSession)
         {
             var existing = SessionPages().FirstOrDefault(p => p.Connection.Id == c.Id && p.IsActive);
             if (existing != null)
@@ -1184,26 +1192,42 @@ public class MainForm : Form
             }
         }
 
-        // 密碼:有儲存就用;否則 (預設) 連線前詢問,只用於這次連線
-        var password = PasswordProtector.Unprotect(c.EncryptedPassword);
+        // 密碼:有儲存就用;否則 (預設) 連線前詢問,只用於這次連線。RDP 與 VNC 的密碼分開
+        var password = PasswordProtector.Unprotect(vnc ? c.VncEncryptedPassword : c.EncryptedPassword);
         bool passwordSaved = password.Length > 0;
         var target = c; // 這次工作階段實際使用的連線設定
         if (!passwordSaved && _store.Settings.AskPasswordBeforeConnect)
         {
             bool persisted = _store.Connections.Contains(c);
-            using var dlg = new PasswordPromptForm(c, allowRemember: persisted);
+            using var dlg = new PasswordPromptForm(c, allowRemember: persisted, vnc: vnc);
             if (dlg.ShowDialog(this) != DialogResult.OK) return;
             password = dlg.Password;
-            var (domain, user) = PasswordPromptForm.SplitUser(dlg.UserName);
-            if (user != c.Username || domain != c.Domain)
+            if (vnc)
             {
-                if (dlg.Remember || !persisted) { c.Username = user; c.Domain = domain; }
-                else { target = c.Clone(); target.Username = user; target.Domain = domain; }
+                if (dlg.UserName != c.VncUsername)
+                {
+                    if (dlg.Remember || !persisted) c.VncUsername = dlg.UserName;
+                    else { target = c.Clone(); target.VncUsername = dlg.UserName; }
+                }
+                if (dlg.Remember && password.Length > 0)
+                {
+                    c.VncEncryptedPassword = PasswordProtector.Protect(password);
+                    passwordSaved = true;
+                }
             }
-            if (dlg.Remember && password.Length > 0)
+            else
             {
-                c.EncryptedPassword = PasswordProtector.Protect(password);
-                passwordSaved = true;
+                var (domain, user) = PasswordPromptForm.SplitUser(dlg.UserName);
+                if (user != c.Username || domain != c.Domain)
+                {
+                    if (dlg.Remember || !persisted) { c.Username = user; c.Domain = domain; }
+                    else { target = c.Clone(); target.Username = user; target.Domain = domain; }
+                }
+                if (dlg.Remember && password.Length > 0)
+                {
+                    c.EncryptedPassword = PasswordProtector.Protect(password);
+                    passwordSaved = true;
+                }
             }
         }
 
@@ -1214,7 +1238,7 @@ public class MainForm : Form
             try { _store.SaveConnections(); } catch { /* ignore */ }
         }
 
-        if (c.IsVnc)
+        if (vnc)
         {
             try
             {
@@ -1285,7 +1309,7 @@ public class MainForm : Form
             }
         }
 
-        if (_tabs.SelectedTab == _listPage || mode == LaunchMode.External || c.IsVnc) RefreshList();
+        if (_tabs.SelectedTab == _listPage || mode == LaunchMode.External || vnc) RefreshList();
         UpdateCount();
         RefreshSidebarSessions();
     }
@@ -1372,7 +1396,7 @@ public class MainForm : Form
                 await sem.WaitAsync();
                 try
                 {
-                    var (ok, ms) = await HostChecker.CheckAsync(c.Host, c.Port, timeout);
+                    var (ok, ms) = await HostChecker.CheckAsync(c.Host, c.ActivePort, timeout);
                     c.Status = ok ? HostStatus.Online : HostStatus.Offline;
                     c.LatencyMs = ok ? ms : null;
                 }
@@ -1500,11 +1524,6 @@ public class MainForm : Form
     {
         var c = SelectedConnections().FirstOrDefault();
         if (c == null) return;
-        if (c.IsVnc)
-        {
-            MessageBox.Show(this, "VNC 連線無法匯出為 .rdp 檔。", "匯出", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
         using var dlg = new SaveFileDialog { Filter = "遠端桌面檔 (*.rdp)|*.rdp", FileName = c.Name + ".rdp" };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         try { ExternalLauncher.SaveRdpFile(c, dlg.FileName); SetMessage("已匯出 " + dlg.FileName); }
@@ -1561,7 +1580,8 @@ public class MainForm : Form
     private void ShowShortcuts() => MessageBox.Show(this,
         "Ctrl+N\t新增連線\n" +
         "Enter / 雙擊\t連線\n" +
-        "Ctrl+Shift+Enter\t以外部 mstsc 連線\n" +
+        "Ctrl+Shift+Enter\t以 RDP 連線 (外部 mstsc)\n" +
+        "Ctrl+Shift+V\t以 VNC 連線 (UltraVNC)\n" +
         "Ctrl+E / F2\t編輯\n" +
         "Ctrl+D\t建立複本\n" +
         "Del\t刪除\n" +

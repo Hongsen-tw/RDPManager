@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>RDPManager</AssemblyName>
     <RootNamespace>RDPManager</RootNamespace>
-    <Version>1.3.0</Version>
+    <Version>1.4.0</Version>
     <Product>RDP 遠端連線管理員</Product>
     <AssemblyTitle>RDP 遠端連線管理員</AssemblyTitle>
     <Description>Windows 遠端桌面 (RDP) 連線管理工具</Description>

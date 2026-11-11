@@ -21,7 +21,10 @@ public class FullScreenSidebar : Panel
     private static readonly Color Gray = Color.FromArgb(120, 124, 132);
 
     public event Action<RdpSessionPage>? SessionClicked;
-    public event Action<RdpConnection>? ConnectRequested;
+    /// <summary>(連線, 指定類型;null = 預設連線類型)</summary>
+    public event Action<RdpConnection, ConnectionProtocol?>? ConnectRequested;
+    /// <summary>右鍵選單開啟中 (避免面板自動收合)</summary>
+    public bool MenuOpen { get; private set; }
     public event Action? PinToggled;
     public event Action? CollapseRequested;
     public event Action? MinimizeRequested;
@@ -87,7 +90,7 @@ public class FullScreenSidebar : Panel
         // ---- 所有連線 ----
         var lblConns = new Label
         {
-            Text = "所有連線 (雙擊開啟)", Dock = DockStyle.Top, Height = S(30),
+            Text = "所有連線 (雙擊開啟,右鍵可選 VNC)", Dock = DockStyle.Top, Height = S(30),
             Padding = new Padding(S(10), S(10), 0, 0), ForeColor = TextSub,
         };
         var searchBox = new Panel { Dock = DockStyle.Top, Height = S(36), Padding = new Padding(S(10), S(4), S(10), S(4)) };
@@ -102,7 +105,7 @@ public class FullScreenSidebar : Panel
             if (e.KeyCode == Keys.Enter && _conns.Items.Count > 0)
             {
                 e.SuppressKeyPress = true;
-                ConnectRequested?.Invoke((RdpConnection)_conns.Items[_conns.SelectedIndex >= 0 ? _conns.SelectedIndex : 0]);
+                ConnectRequested?.Invoke((RdpConnection)_conns.Items[_conns.SelectedIndex >= 0 ? _conns.SelectedIndex : 0], null);
             }
             else if (e.KeyCode == Keys.Down && _conns.Items.Count > 0)
             {
@@ -117,11 +120,26 @@ public class FullScreenSidebar : Panel
         SetupList(_conns, S(42));
         _conns.Dock = DockStyle.Fill;
         _conns.DrawItem += DrawConnection;
-        _conns.DoubleClick += (_, _) => { if (_conns.SelectedItem is RdpConnection c) ConnectRequested?.Invoke(c); };
+        _conns.DoubleClick += (_, _) => { if (_conns.SelectedItem is RdpConnection c) ConnectRequested?.Invoke(c, null); };
         _conns.KeyDown += (_, e) =>
         {
-            if (e.KeyCode == Keys.Enter && _conns.SelectedItem is RdpConnection c) { e.SuppressKeyPress = true; ConnectRequested?.Invoke(c); }
+            if (e.KeyCode == Keys.Enter && _conns.SelectedItem is RdpConnection c) { e.SuppressKeyPress = true; ConnectRequested?.Invoke(c, null); }
         };
+
+        // 右鍵:選擇以 RDP 或 VNC 連線
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("連線 (預設類型)", null, (_, _) => { if (_conns.SelectedItem is RdpConnection c) ConnectRequested?.Invoke(c, null); });
+        menu.Items.Add("以 RDP 連線", null, (_, _) => { if (_conns.SelectedItem is RdpConnection c) ConnectRequested?.Invoke(c, ConnectionProtocol.Rdp); });
+        menu.Items.Add("以 VNC 連線 (UltraVNC)", null, (_, _) => { if (_conns.SelectedItem is RdpConnection c) ConnectRequested?.Invoke(c, ConnectionProtocol.Vnc); });
+        menu.Opening += (_, e) =>
+        {
+            int i = _conns.IndexFromPoint(_conns.PointToClient(Cursor.Position));
+            if (i < 0) { e.Cancel = true; return; }
+            _conns.SelectedIndex = i;
+            MenuOpen = true;
+        };
+        menu.Closed += (_, _) => MenuOpen = false;
+        _conns.ContextMenuStrip = menu;
         _conns.MouseMove += (_, e) => SetHover(_conns, ref _hoverConn, _conns.IndexFromPoint(e.Location));
         _conns.MouseLeave += (_, _) => SetHover(_conns, ref _hoverConn, -1);
 

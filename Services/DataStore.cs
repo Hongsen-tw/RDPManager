@@ -48,6 +48,13 @@ public class DataStore
     {
         Directory.CreateDirectory(DataDir);
         Connections = Read<List<RdpConnection>>(ConnectionsPath) ?? new();
+        // v1.3.0 的 VNC 連線轉成新格式 (轉換前先備份)
+        if (Connections.Any(c => c.IsVnc && c.VncPort == null))
+        {
+            try { CreateBackup(); } catch { /* ignore */ }
+            foreach (var c in Connections) c.MigrateLegacyVnc();
+            try { SaveConnections(); } catch { /* ignore */ }
+        }
         History = Read<List<HistoryEntry>>(HistoryPath) ?? new();
         Settings = Read<AppSettings>(SettingsPath) ?? new();
     }
@@ -122,6 +129,10 @@ public class DataStore
         if (!Directory.GetFiles(BackupDir, today + "*.json").Any()) CreateBackup();
     }
 
-    public static List<RdpConnection> ReadBackup(string path) =>
-        JsonSerializer.Deserialize<List<RdpConnection>>(File.ReadAllText(path), JsonOptions) ?? new();
+    public static List<RdpConnection> ReadBackup(string path)
+    {
+        var list = JsonSerializer.Deserialize<List<RdpConnection>>(File.ReadAllText(path), JsonOptions) ?? new();
+        foreach (var c in list) c.MigrateLegacyVnc();
+        return list;
+    }
 }
