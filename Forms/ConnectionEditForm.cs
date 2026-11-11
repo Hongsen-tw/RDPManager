@@ -19,6 +19,9 @@ public class ConnectionEditForm : Form
     private readonly TextBox _txtDomain = new() { Width = 200, PlaceholderText = "選填" };
     private readonly TextBox _txtPassword = new() { Width = 200, UseSystemPasswordChar = true };
     private readonly CheckBox _chkShowPwd = new() { Text = "顯示", AutoSize = true };
+    private readonly CheckBox _chkRemember = new() { Text = "記住密碼", AutoSize = true };
+    private readonly bool _rememberDefault;
+    private bool _hadSavedPassword;
     private readonly ComboBox _cboGroup = new() { DropDownStyle = ComboBoxStyle.DropDown };
     private readonly CheckBox _chkFav = new() { Text = "加入我的最愛", AutoSize = true };
     private readonly TextBox _txtNotes = new() { Multiline = true, ScrollBars = ScrollBars.Vertical, Height = 80 };
@@ -46,9 +49,11 @@ public class ConnectionEditForm : Form
 
     private static readonly int[] ColorDepths = { 15, 16, 24, 32 };
 
-    public ConnectionEditForm(RdpConnection conn, IEnumerable<string> groups, string title)
+    /// <param name="rememberDefault">新連線 (尚未儲存密碼) 時「記住密碼」的預設值</param>
+    public ConnectionEditForm(RdpConnection conn, IEnumerable<string> groups, string title, bool rememberDefault = false)
     {
         _conn = conn;
+        _rememberDefault = rememberDefault;
         SetupDialog(this, title, new Size(540, 520));
 
         var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(12, 4) };
@@ -71,6 +76,7 @@ public class ConnectionEditForm : Form
         var t = NewTable();
         _cboGroup.Items.AddRange(groups.Cast<object>().ToArray());
         _chkShowPwd.CheckedChanged += (_, _) => _txtPassword.UseSystemPasswordChar = !_chkShowPwd.Checked;
+        _chkRemember.CheckedChanged += (_, _) => UpdatePasswordEnabled();
         _txtHost.Leave += (_, _) =>
         {
             // 若輸入 host:port 自動拆開
@@ -88,13 +94,13 @@ public class ConnectionEditForm : Form
         AddRow(t, "連接埠", Flow(_numPort, _btnTest, _lblTest), false);
         AddRow(t, "使用者名稱", _txtUser, false);
         AddRow(t, "網域", _txtDomain, false);
-        AddRow(t, "密碼", Flow(_txtPassword, _chkShowPwd), false);
+        AddRow(t, "密碼", Flow(_chkRemember, _txtPassword, _chkShowPwd), false);
         AddRow(t, "群組", _cboGroup);
         AddRow(t, "", _chkFav, false);
         AddRow(t, "備註", _txtNotes);
         AddFull(t, new Label
         {
-            Text = "※ 密碼以 Windows DPAPI 加密,只有目前的 Windows 帳戶能解密。留白則連線時再輸入。",
+            Text = "※ 預設不儲存密碼,每次連線時輸入。勾選「記住密碼」才會儲存,並以 Windows DPAPI 加密 (只有目前的 Windows 帳戶能解密)。",
             AutoSize = true, ForeColor = SystemColors.GrayText, MaximumSize = new Size(480, 0),
         });
         return new TabPage("一般") { Controls = { t }, Padding = new Padding(4) };
@@ -162,7 +168,10 @@ public class ConnectionEditForm : Form
         _numPort.Value = Math.Clamp(c.Port, 1, 65535);
         _txtUser.Text = c.Username;
         _txtDomain.Text = c.Domain;
+        _hadSavedPassword = !string.IsNullOrEmpty(c.EncryptedPassword);
         _txtPassword.Text = PasswordProtector.Unprotect(c.EncryptedPassword);
+        _chkRemember.Checked = _hadSavedPassword || _rememberDefault;
+        UpdatePasswordEnabled();
         _cboGroup.Text = c.Group;
         _chkFav.Checked = c.IsFavorite;
         _txtNotes.Text = c.Notes;
@@ -183,6 +192,13 @@ public class ConnectionEditForm : Form
         _cboLaunch.SelectedIndex = (int)c.LaunchMode;
         _chkAdmin.Checked = c.AdminSession;
         _txtMac.Text = c.MacAddress;
+    }
+
+    private void UpdatePasswordEnabled()
+    {
+        _txtPassword.Enabled = _chkShowPwd.Enabled = _chkRemember.Checked;
+        _txtPassword.PlaceholderText = _chkRemember.Checked ? "" : "連線時輸入";
+        if (!_chkRemember.Checked) _txtPassword.Clear();
     }
 
     private void OnOk(object? sender, EventArgs e)
@@ -208,7 +224,12 @@ public class ConnectionEditForm : Form
         c.Name = _txtName.Text.Trim().Length > 0 ? _txtName.Text.Trim() : host;
         c.Username = _txtUser.Text.Trim();
         c.Domain = _txtDomain.Text.Trim();
-        c.EncryptedPassword = PasswordProtector.Protect(_txtPassword.Text);
+        c.EncryptedPassword = _chkRemember.Checked ? PasswordProtector.Protect(_txtPassword.Text) : null;
+        // 取消記住密碼時,一併清除 Windows 認證管理員中的暫存帳密
+        if (_hadSavedPassword && c.EncryptedPassword == null)
+        {
+            try { CredentialManager.DeleteRdpCredential(host); } catch { /* ignore */ }
+        }
         c.Group = _cboGroup.Text.Trim();
         c.IsFavorite = _chkFav.Checked;
         c.Notes = _txtNotes.Text.Trim();

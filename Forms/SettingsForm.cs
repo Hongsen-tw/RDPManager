@@ -22,11 +22,13 @@ public class SettingsForm : Form
     private readonly CheckBox _chkHover = new() { Text = "全螢幕時滑鼠移到螢幕左緣,自動展開側邊面板", AutoSize = true };
     private readonly ComboBox _cboKeys = DropList("僅全螢幕時傳送到遠端", "一律傳送到遠端", "保留在本機");
     private static readonly int[] KeyModes = { 2, 1, 0 };
+    private readonly CheckBox _chkRemember = new() { Text = "新連線預設「記住密碼」", AutoSize = true };
+    private readonly CheckBox _chkAsk = new() { Text = "未儲存密碼時,連線前詢問帳號密碼", AutoSize = true };
 
     public SettingsForm(AppSettings settings)
     {
         _s = settings;
-        SetupDialog(this, "設定", new Size(500, 500));
+        SetupDialog(this, "設定", new Size(500, 610));
 
         var t = NewTable();
         AddRow(t, "預設連線方式", _cboLaunch);
@@ -34,6 +36,9 @@ public class SettingsForm : Form
         AddRow(t, "", _chkHover, false);
         AddRow(t, "Windows 組合鍵", _cboKeys, false);
         AddRow(t, "", new Label { Text = "(Alt+Tab、Win 鍵等;已連線的工作階段需重新連線才會套用)", AutoSize = true, ForeColor = SystemColors.GrayText }, false);
+        AddRow(t, "密碼", _chkAsk, false);
+        AddRow(t, "", _chkRemember, false);
+        AddRow(t, "", new Label { Text = "(預設不儲存密碼;個別連線可在編輯視窗勾選「記住密碼」)", AutoSize = true, ForeColor = SystemColors.GrayText }, false);
         AddRow(t, "一般", _chkReuse, false);
         AddRow(t, "", _chkTray, false);
         AddRow(t, "", _chkConfirm, false);
@@ -60,6 +65,8 @@ public class SettingsForm : Form
         _chkConfirm.Checked = settings.ConfirmDelete;
         _chkBackup.Checked = settings.DailyAutoBackup;
         _chkFull.Checked = settings.AlwaysFullScreen;
+        _chkRemember.Checked = settings.RememberPasswordByDefault;
+        _chkAsk.Checked = settings.AskPasswordBeforeConnect;
         _chkHover.Checked = settings.SidebarHoverExpand;
         _cboKeys.SelectedIndex = Math.Max(0, Array.IndexOf(KeyModes, settings.KeyboardHookMode));
     }
@@ -75,6 +82,8 @@ public class SettingsForm : Form
         _s.ConfirmDelete = _chkConfirm.Checked;
         _s.DailyAutoBackup = _chkBackup.Checked;
         _s.AlwaysFullScreen = _chkFull.Checked;
+        _s.RememberPasswordByDefault = _chkRemember.Checked;
+        _s.AskPasswordBeforeConnect = _chkAsk.Checked;
         _s.SidebarHoverExpand = _chkHover.Checked;
         _s.KeyboardHookMode = KeyModes[_cboKeys.SelectedIndex];
     }

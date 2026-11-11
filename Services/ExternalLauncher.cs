@@ -9,7 +9,10 @@ namespace RDPManager.Services;
 /// <summary>產生 .rdp 檔並以 Windows 內建 mstsc.exe 開啟</summary>
 public static class ExternalLauncher
 {
-    public static void Launch(RdpConnection c, string password, bool fullScreen = false)
+    /// <param name="keepCredential">
+    /// false = 密碼未儲存:mstsc 讀取後就從 Windows 認證管理員刪除,不留下帳密
+    /// </param>
+    public static void Launch(RdpConnection c, string password, bool fullScreen = false, bool keepCredential = true)
     {
         if (fullScreen && c.ScreenMode != ScreenMode.FullScreen)
         {
@@ -17,8 +20,12 @@ public static class ExternalLauncher
             c.ScreenMode = ScreenMode.FullScreen;
         }
         var host = c.Host.Trim();
+        bool wroteCredential = false;
         if (!string.IsNullOrEmpty(c.FullUserName) && !string.IsNullOrEmpty(password))
+        {
             CredentialManager.WriteRdpCredential(host, c.FullUserName, password);
+            wroteCredential = true;
+        }
 
         var dir = Path.Combine(Path.GetTempPath(), "RDPManager");
         Directory.CreateDirectory(dir);
@@ -29,10 +36,14 @@ public static class ExternalLauncher
         if (c.AdminSession) args += " /admin";
         Process.Start(new ProcessStartInfo("mstsc.exe", args) { UseShellExecute = false });
 
-        // mstsc 讀取完畢後刪除暫存 .rdp
+        // mstsc 讀取完畢後刪除暫存 .rdp;密碼未儲存時也刪除暫存帳密
         _ = Task.Delay(TimeSpan.FromSeconds(20)).ContinueWith(_ =>
         {
             try { File.Delete(file); } catch { /* ignore */ }
+            if (wroteCredential && !keepCredential)
+            {
+                try { CredentialManager.DeleteRdpCredential(host); } catch { /* ignore */ }
+            }
         });
     }
 

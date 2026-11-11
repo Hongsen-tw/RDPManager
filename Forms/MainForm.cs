@@ -643,7 +643,7 @@ public class MainForm : Form
         m.Items.Add(Item("重新連線", Keys.None, (_, _) => page.Connect()));
         m.Items.Add(Item("全螢幕", Keys.None, (_, _) => { _tabs.SelectedTab = page; EnterFullScreen(); }));
         m.Items.Add(Item("改用外部 mstsc 開啟", Keys.None, (_, _) => { CloseSession(page, false); Connect(page.Connection, LaunchMode.External); }));
-        if (!_store.Connections.Contains(page.Connection))
+        if (!_store.Connections.Any(x => x.Id == page.Connection.Id))
             m.Items.Add(Item("儲存為連線...", Keys.None, (_, _) => SaveQuickConnection(page.Connection)));
         m.Items.Add(new ToolStripSeparator());
         m.Items.Add(Item("中斷並關閉分頁", Keys.None, (_, _) => CloseSession(page, false)));
@@ -976,7 +976,7 @@ public class MainForm : Form
         var c = new RdpConnection();
         if (_filterKey.StartsWith("group:")) c.Group = _filterKey["group:".Length..];
         if (_filterKey == "fav") c.IsFavorite = true;
-        using var f = new ConnectionEditForm(c, _store.GetGroups(), "新增連線");
+        using var f = new ConnectionEditForm(c, _store.GetGroups(), "新增連線", _store.Settings.RememberPasswordByDefault);
         if (f.ShowDialog(this) != DialogResult.OK) return;
         _store.Connections.Add(c);
         SaveAndRefresh(new[] { c.Id });
@@ -989,7 +989,7 @@ public class MainForm : Form
         var c = SelectedConnections().FirstOrDefault();
         if (c == null) return;
         var copy = c.Clone();
-        using var f = new ConnectionEditForm(copy, _store.GetGroups(), $"編輯連線 - {c.Name}");
+        using var f = new ConnectionEditForm(copy, _store.GetGroups(), $"編輯連線 - {c.Name}", _store.Settings.RememberPasswordByDefault);
         if (f.ShowDialog(this) != DialogResult.OK) return;
         var idx = _store.Connections.IndexOf(c);
         if (idx >= 0) _store.Connections[idx] = copy;
@@ -1057,7 +1057,7 @@ public class MainForm : Form
     private void SaveQuickConnection(RdpConnection temp)
     {
         var c = temp.Clone();
-        using var f = new ConnectionEditForm(c, _store.GetGroups(), "儲存連線");
+        using var f = new ConnectionEditForm(c, _store.GetGroups(), "儲存連線", _store.Settings.RememberPasswordByDefault);
         if (f.ShowDialog(this) != DialogResult.OK) return;
         _store.Connections.Add(c);
         SaveAndRefresh(new[] { c.Id });
@@ -1163,7 +1163,29 @@ public class MainForm : Form
             }
         }
 
+        // 密碼:有儲存就用;否則 (預設) 連線前詢問,只用於這次連線
         var password = PasswordProtector.Unprotect(c.EncryptedPassword);
+        bool passwordSaved = password.Length > 0;
+        var target = c; // 這次工作階段實際使用的連線設定
+        if (!passwordSaved && _store.Settings.AskPasswordBeforeConnect)
+        {
+            bool persisted = _store.Connections.Contains(c);
+            using var dlg = new PasswordPromptForm(c, allowRemember: persisted);
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            password = dlg.Password;
+            var (domain, user) = PasswordPromptForm.SplitUser(dlg.UserName);
+            if (user != c.Username || domain != c.Domain)
+            {
+                if (dlg.Remember || !persisted) { c.Username = user; c.Domain = domain; }
+                else { target = c.Clone(); target.Username = user; target.Domain = domain; }
+            }
+            if (dlg.Remember && password.Length > 0)
+            {
+                c.EncryptedPassword = PasswordProtector.Protect(password);
+                passwordSaved = true;
+            }
+        }
+
         if (_store.Connections.Contains(c))
         {
             c.LastConnectedAt = DateTime.Now;
@@ -1175,7 +1197,7 @@ public class MainForm : Form
         {
             try
             {
-                ExternalLauncher.Launch(c, password, WantsFullScreen(c));
+                ExternalLauncher.Launch(target, password, WantsFullScreen(c), keepCredential: passwordSaved);
                 AddHistory(c, "外部", "啟動 mstsc", "");
                 SetMessage($"已以 mstsc 開啟「{c.Name}」");
             }
@@ -1187,7 +1209,7 @@ public class MainForm : Form
         }
         else
         {
-            var page = new RdpSessionPage(c, password) { KeyboardHookMode = _store.Settings.KeyboardHookMode };
+            var page = new RdpSessionPage(target, password) { KeyboardHookMode = _store.Settings.KeyboardHookMode };
             page.StateChanged += p =>
             {
                 if (_tabs.SelectedTab == p) SetMessage($"{p.Connection.Name}:{p.LastMessage.Replace('\n', ' ')}");
@@ -1222,7 +1244,8 @@ public class MainForm : Form
                 if (MessageBox.Show(this, $"內嵌遠端桌面元件無法啟動:\n{ex.Message}\n\n要改用外部 mstsc 連線嗎?", "連線失敗",
                         MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
                 {
-                    try { ExternalLauncher.Launch(c, password, WantsFullScreen(c)); } catch (Exception ex2) { ShowError("無法啟動 mstsc", ex2); }
+                    try { ExternalLauncher.Launch(target, password, WantsFullScreen(c), keepCredential: passwordSaved); }
+                    catch (Exception ex2) { ShowError("無法啟動 mstsc", ex2); }
                 }
             }
         }

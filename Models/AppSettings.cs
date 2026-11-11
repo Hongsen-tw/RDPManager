@@ -16,6 +16,12 @@ public class AppSettings
     public bool ReuseOpenSession { get; set; } = true;
     public bool DailyAutoBackup { get; set; } = true;
 
+    // 密碼
+    /// <summary>新連線預設「記住密碼」(預設不儲存)</summary>
+    public bool RememberPasswordByDefault { get; set; }
+    /// <summary>未儲存密碼時,連線前先詢問帳號密碼</summary>
+    public bool AskPasswordBeforeConnect { get; set; } = true;
+
     // 全螢幕
     /// <summary>所有連線一律以全螢幕開啟 (預設開啟)</summary>
     public bool AlwaysFullScreen { get; set; } = true;
