@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>RDPManager</AssemblyName>
+    <RootNamespace>RDPManager</RootNamespace>
+    <Version>1.0.0</Version>
+    <Product>RDP 遠端連線管理員</Product>
+    <AssemblyTitle>RDP 遠端連線管理員</AssemblyTitle>
+    <Description>Windows 遠端桌面 (RDP) 連線管理工具</Description>
+    <Company>鴻森智能科技股份有限公司</Company>
+    <Authors>鴻森智能科技股份有限公司</Authors>
+    <Copyright>Copyright © 2026 鴻森智能科技股份有限公司. All rights reserved.</Copyright>
+    <ApplicationIcon>Resources\app.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <NoWarn>$(NoWarn);CA1416;WFO1000</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\app.ico" LogicalName="RDPManager.app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="tools\**;docs\**;publish\**;dist\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
+  </ItemGroup>
+
+</Project>
