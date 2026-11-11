@@ -33,7 +33,7 @@ public class RdpConnection
     public bool IsFavorite { get; set; }
 
     // 顯示
-    public ScreenMode ScreenMode { get; set; } = ScreenMode.FitWindow;
+    public ScreenMode ScreenMode { get; set; } = ScreenMode.FullScreen;
     public int DesktopWidth { get; set; } = 1920;
     public int DesktopHeight { get; set; } = 1080;
     public int ColorDepth { get; set; } = 32;

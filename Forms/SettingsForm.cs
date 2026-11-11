@@ -18,15 +18,23 @@ public class SettingsForm : Form
     private readonly NumericUpDown _numAuto = new() { Minimum = 0, Maximum = 1440, Width = 80 };
     private readonly CheckBox _chkConfirm = new() { Text = "刪除連線前確認", AutoSize = true };
     private readonly CheckBox _chkBackup = new() { Text = "每天自動備份連線清單", AutoSize = true };
+    private readonly CheckBox _chkFull = new() { Text = "所有連線一律以全螢幕開啟", AutoSize = true };
+    private readonly CheckBox _chkHover = new() { Text = "全螢幕時滑鼠移到螢幕左緣,自動展開側邊面板", AutoSize = true };
+    private readonly ComboBox _cboKeys = DropList("僅全螢幕時傳送到遠端", "一律傳送到遠端", "保留在本機");
+    private static readonly int[] KeyModes = { 2, 1, 0 };
 
     public SettingsForm(AppSettings settings)
     {
         _s = settings;
-        SetupDialog(this, "設定", new Size(480, 400));
+        SetupDialog(this, "設定", new Size(500, 500));
 
         var t = NewTable();
         AddRow(t, "預設連線方式", _cboLaunch);
-        AddRow(t, "", _chkReuse, false);
+        AddRow(t, "全螢幕", _chkFull, false);
+        AddRow(t, "", _chkHover, false);
+        AddRow(t, "Windows 組合鍵", _cboKeys, false);
+        AddRow(t, "", new Label { Text = "(Alt+Tab、Win 鍵等;已連線的工作階段需重新連線才會套用)", AutoSize = true, ForeColor = SystemColors.GrayText }, false);
+        AddRow(t, "一般", _chkReuse, false);
         AddRow(t, "", _chkTray, false);
         AddRow(t, "", _chkConfirm, false);
         AddRow(t, "", _chkCheck, false);
@@ -51,6 +59,9 @@ public class SettingsForm : Form
         _numAuto.Value = Math.Clamp(settings.AutoCheckMinutes, 0, 1440);
         _chkConfirm.Checked = settings.ConfirmDelete;
         _chkBackup.Checked = settings.DailyAutoBackup;
+        _chkFull.Checked = settings.AlwaysFullScreen;
+        _chkHover.Checked = settings.SidebarHoverExpand;
+        _cboKeys.SelectedIndex = Math.Max(0, Array.IndexOf(KeyModes, settings.KeyboardHookMode));
     }
 
     private void Save()
@@ -63,5 +74,8 @@ public class SettingsForm : Form
         _s.AutoCheckMinutes = (int)_numAuto.Value;
         _s.ConfirmDelete = _chkConfirm.Checked;
         _s.DailyAutoBackup = _chkBackup.Checked;
+        _s.AlwaysFullScreen = _chkFull.Checked;
+        _s.SidebarHoverExpand = _chkHover.Checked;
+        _s.KeyboardHookMode = KeyModes[_cboKeys.SelectedIndex];
     }
 }

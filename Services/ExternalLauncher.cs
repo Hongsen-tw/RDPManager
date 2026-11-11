@@ -9,8 +9,13 @@ namespace RDPManager.Services;
 /// <summary>產生 .rdp 檔並以 Windows 內建 mstsc.exe 開啟</summary>
 public static class ExternalLauncher
 {
-    public static void Launch(RdpConnection c, string password)
+    public static void Launch(RdpConnection c, string password, bool fullScreen = false)
     {
+        if (fullScreen && c.ScreenMode != ScreenMode.FullScreen)
+        {
+            c = c.Clone();
+            c.ScreenMode = ScreenMode.FullScreen;
+        }
         var host = c.Host.Trim();
         if (!string.IsNullOrEmpty(c.FullUserName) && !string.IsNullOrEmpty(password))
             CredentialManager.WriteRdpCredential(host, c.FullUserName, password);

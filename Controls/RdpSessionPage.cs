@@ -19,7 +19,15 @@ public class RdpSessionPage : TabPage
     public event Action<RdpSessionPage, string, string>? SessionEvent;
     public event Action<RdpSessionPage>? StateChanged;
     public event Action<RdpSessionPage>? CloseRequested;
+    /// <summary>遠端要求切換全螢幕 (true = 進入, false = 離開),例如在遠端按 Ctrl+Alt+Break</summary>
+    public event Action<RdpSessionPage, bool>? FullScreenRequested;
+    public event Action<RdpSessionPage>? MinimizeRequested;
 
+    /// <summary>Windows 組合鍵:0 = 留在本機、1 = 一律傳送到遠端、2 = 僅全螢幕時傳送到遠端</summary>
+    public int KeyboardHookMode { get; set; } = 2;
+
+    private bool _wantRemoteFullScreen;
+    private bool _suppressFsEvents;
     private readonly string _password;
     private RdpClientControl? _rdp;
     private bool _loggedIn;
@@ -63,7 +71,14 @@ public class RdpSessionPage : TabPage
 
         var c = Connection;
         var rdp = new RdpClientControl { Dock = DockStyle.Fill };
-        rdp.Connected += (_, _) => SetState(SessionState.Connected, "已連線");
+        rdp.Connected += (_, _) =>
+        {
+            SetState(SessionState.Connected, "已連線");
+            if (_wantRemoteFullScreen) SetRemoteFullScreen(true);
+        };
+        rdp.RequestGoFullScreen += (_, _) => { if (!_suppressFsEvents) FullScreenRequested?.Invoke(this, true); };
+        rdp.RequestLeaveFullScreen += (_, _) => { if (!_suppressFsEvents) FullScreenRequested?.Invoke(this, false); };
+        rdp.RequestContainerMinimize += (_, _) => MinimizeRequested?.Invoke(this);
         rdp.LoginComplete += (_, _) =>
         {
             _loggedIn = true;
@@ -86,10 +101,7 @@ public class RdpSessionPage : TabPage
         {
             case ScreenMode.Custom:
                 w = c.DesktopWidth; h = c.DesktopHeight; break;
-            case ScreenMode.FullScreen:
-                var b = Screen.FromControl(this).Bounds;
-                w = b.Width; h = b.Height; break;
-            default:
+            default: // 符合分頁 / 全螢幕:主視窗會先切換成全螢幕,再以分頁實際大小連線
                 w = ClientSize.Width; h = ClientSize.Height; break;
         }
         w = Math.Clamp(w, 640, 8192) & ~1;
@@ -120,11 +132,16 @@ public class RdpSessionPage : TabPage
             TrySet(() => adv.ConnectToAdministerServer = c.AdminSession);
             TrySet(() => adv.BitmapPersistence = 1);
             TrySet(() => adv.GrabFocusOnConnect = true);
+            // 全螢幕交給本程式處理 (含側邊面板),不使用 ActiveX 自己的全螢幕視窗,
+            // 避免「全螢幕縮小後無法回到全螢幕」的問題
+            TrySet(() => adv.ContainerHandledFullScreen = 1);
         }
         int audio = (int)c.AudioMode;
         if (!TrySet(() => o.SecuredSettings3.AudioRedirectionMode = audio))
             TrySet(() => o.SecuredSettings2.AudioRedirectionMode = audio);
-        if (c.ScreenMode == ScreenMode.FullScreen) TrySet(() => o.FullScreen = true);
+        int hook = KeyboardHookMode;
+        if (!TrySet(() => o.SecuredSettings3.KeyboardHookMode = hook))
+            TrySet(() => o.SecuredSettings2.KeyboardHookMode = hook);
 
         SetState(SessionState.Connecting, $"正在連線到 {c.DisplayAddress} …");
         o.Connect();
@@ -136,10 +153,17 @@ public class RdpSessionPage : TabPage
         try { _rdp.Ocx.Disconnect(); } catch { /* ignore */ }
     }
 
-    public void EnterFullScreen()
+    /// <summary>
+    /// 同步 ActiveX 的全螢幕旗標 (ContainerHandledFullScreen 模式下不會開新視窗),
+    /// 讓「僅全螢幕時傳送 Windows 組合鍵」與 Ctrl+Alt+Break 切換正常運作。
+    /// </summary>
+    public void SetRemoteFullScreen(bool on)
     {
+        _wantRemoteFullScreen = on;
         if (_rdp == null || State != SessionState.Connected) return;
-        try { _rdp.Ocx.FullScreen = true; } catch { /* ignore */ }
+        _suppressFsEvents = true;
+        try { _rdp.Ocx.FullScreen = on; } catch { /* ignore */ }
+        finally { _suppressFsEvents = false; }
     }
 
     public new void Focus()
@@ -204,7 +228,7 @@ public class RdpSessionPage : TabPage
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
-        if (_loggedIn && State == SessionState.Connected && Connection.ScreenMode == ScreenMode.FitWindow)
+        if (_loggedIn && State == SessionState.Connected && Connection.ScreenMode != ScreenMode.Custom)
         {
             _resizeTimer.Stop();
             _resizeTimer.Start();

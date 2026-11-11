@@ -20,7 +20,21 @@ public class MainForm : Form
 
     private readonly SplitContainer _split = new() { Dock = DockStyle.Fill, FixedPanel = FixedPanel.Panel1 };
     private readonly TreeView _tree = new() { Dock = DockStyle.Fill, HideSelection = false, AllowDrop = true, FullRowSelect = true, ShowLines = false, ItemHeight = 26, BorderStyle = BorderStyle.None };
-    private readonly TabControl _tabs = new() { Dock = DockStyle.Fill, ShowToolTips = true, Padding = new Point(10, 4) };
+    private readonly TabControl _tabs = new() { ShowToolTips = true, Padding = new Point(10, 4) };
+    /// <summary>分頁容器:全螢幕時把頁籤列推出可視範圍 (不重建 ActiveX 視窗)</summary>
+    private readonly Panel _sessionHost = new() { Dock = DockStyle.Fill };
+
+    // 全螢幕工作區
+    private readonly FullScreenSidebar _sidebar = new() { Visible = false };
+    private readonly Button _sidebarHandle = new();
+    private readonly System.Windows.Forms.Timer _edgeTimer = new() { Interval = 100 };
+    private bool _fullScreen;
+    private bool _fsTransition;
+    private bool _sidebarExpanded;
+    private Rectangle _restoreBounds;
+    private FormWindowState _restoreState;
+    private DateTime? _edgeSince;
+    private DateTime? _leaveSince;
     private readonly TabPage _listPage = new("  連線清單  ");
     private readonly ListView _list = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, HideSelection = false, MultiSelect = true, AllowDrop = true, BorderStyle = BorderStyle.None };
     private readonly ToolStripTextBox _txtSearch = new() { Size = new Size(200, 25) };
@@ -127,7 +141,7 @@ public class MainForm : Form
             Item("重新檢查全部狀態", Keys.F5, async (_, _) => await CheckStatusAsync(_store.Connections)),
             new ToolStripSeparator(),
             Item("回到連線清單", Keys.Control | Keys.L, (_, _) => _tabs.SelectedTab = _listPage),
-            Item("目前工作階段全螢幕", Keys.F11, (_, _) => (_tabs.SelectedTab as RdpSessionPage)?.EnterFullScreen()),
+            Item("全螢幕 / 視窗模式切換", Keys.F11, (_, _) => ToggleFullScreen()),
             Item("關閉目前工作階段", Keys.Control | Keys.W, (_, _) => { if (_tabs.SelectedTab is RdpSessionPage p) CloseSession(p, true); }),
             Item("中斷全部工作階段", Keys.None, (_, _) => CloseAllSessions()),
             new ToolStripSeparator(),
@@ -204,6 +218,7 @@ public class MainForm : Form
             new ToolStripSeparator(),
             Btn("▶ 連線", "連線 (Enter / 雙擊)", (_, _) => ConnectSelected()),
             Btn("⧉ 外部 mstsc", "以 Windows 遠端桌面視窗開啟 (Ctrl+Shift+Enter)", (_, _) => ConnectSelected(LaunchMode.External)),
+            Btn("⛶ 全螢幕", "目前的工作階段切換到全螢幕 (F11)", (_, _) => EnterFullScreen()),
             new ToolStripSeparator(),
             Btn("⟳ 檢查狀態", "檢查所有主機是否在線上 (F5)", async (_, _) => await CheckStatusAsync(_store.Connections)),
             Btn("🕘 紀錄", "連線紀錄 (Ctrl+H)", (_, _) => { using var f = new HistoryForm(_store); f.ShowDialog(this); }),
@@ -228,7 +243,9 @@ public class MainForm : Form
     private void BuildMainArea()
     {
         _split.Panel1.Controls.Add(_tree);
-        _split.Panel2.Controls.Add(_tabs);
+        _split.Panel2.Controls.Add(_sessionHost);
+        _sessionHost.Controls.Add(_tabs);
+        _sessionHost.Resize += (_, _) => LayoutTabs();
         _listPage.Controls.Add(_list);
         _tabs.TabPages.Add(_listPage);
 
@@ -335,19 +352,296 @@ public class MainForm : Form
         };
         _tabs.SelectedIndexChanged += (_, _) =>
         {
+            // 全螢幕時不顯示連線清單頁
+            if (_fullScreen && _tabs.SelectedTab == _listPage && SessionPages().FirstOrDefault() is { } first)
+            {
+                _tabs.SelectedTab = first;
+                return;
+            }
             if (_tabs.SelectedTab is RdpSessionPage p)
             {
                 SetMessage($"{p.Connection.Name}:{p.LastMessage}");
                 p.Focus();
             }
+            RefreshSidebarSessions();
         };
+
+        BuildFullScreenUi();
+    }
+
+    // =====================================================================
+    // 全螢幕工作區
+    // =====================================================================
+
+    private void BuildFullScreenUi()
+    {
+        _sidebarHandle.Text = "›";
+        _sidebarHandle.FlatStyle = FlatStyle.Flat;
+        _sidebarHandle.FlatAppearance.BorderSize = 0;
+        _sidebarHandle.FlatAppearance.MouseOverBackColor = Color.FromArgb(0, 95, 184);
+        _sidebarHandle.BackColor = Color.FromArgb(45, 47, 54);
+        _sidebarHandle.ForeColor = Color.White;
+        _sidebarHandle.Font = new Font("Segoe UI", 11F, FontStyle.Bold);
+        _sidebarHandle.Cursor = Cursors.Hand;
+        _sidebarHandle.TabStop = false;
+        _sidebarHandle.Visible = false;
+        _sidebarHandle.Click += (_, _) => ExpandSidebar();
+        new ToolTip().SetToolTip(_sidebarHandle, "展開工作階段面板");
+
+        _sidebar.SessionClicked += p =>
+        {
+            _tabs.SelectedTab = p;
+            AfterSidebarAction();
+        };
+        _sidebar.ConnectRequested += c =>
+        {
+            Connect(c);
+            AfterSidebarAction();
+        };
+        _sidebar.PinToggled += () =>
+        {
+            _store.Settings.SidebarPinned = !_store.Settings.SidebarPinned;
+            try { _store.SaveSettings(); } catch { /* ignore */ }
+            _sidebarExpanded = false;
+            ApplySidebarLayout();
+            FocusActiveSession();
+        };
+        _sidebar.CollapseRequested += () =>
+        {
+            if (_store.Settings.SidebarPinned)
+            {
+                _store.Settings.SidebarPinned = false;
+                try { _store.SaveSettings(); } catch { /* ignore */ }
+            }
+            CollapseSidebar();
+        };
+        _sidebar.MinimizeRequested += () => { CollapseSidebar(); WindowState = FormWindowState.Minimized; };
+        _sidebar.ExitFullScreenRequested += ExitFullScreen;
+        _sidebar.ReconnectRequested += () => { (_tabs.SelectedTab as RdpSessionPage)?.Connect(); AfterSidebarAction(); };
+        _sidebar.DisconnectRequested += () => { if (_tabs.SelectedTab is RdpSessionPage p) CloseSession(p, true); };
+        _sidebar.NextScreenRequested += MoveToNextScreen;
+
+        Controls.Add(_sidebar);
+        Controls.Add(_sidebarHandle);
+        _sidebar.BringToFront();
+        _sidebarHandle.BringToFront();
+
+        _edgeTimer.Tick += (_, _) => OnEdgeTimer();
+    }
+
+    private void ToggleFullScreen()
+    {
+        if (_fullScreen) ExitFullScreen();
+        else EnterFullScreen();
+    }
+
+    private void EnterFullScreen()
+    {
+        if (_fullScreen || _fsTransition) return;
+        var page = _tabs.SelectedTab as RdpSessionPage ?? SessionPages().FirstOrDefault();
+        if (page == null)
+        {
+            SetMessage("目前沒有開啟中的工作階段,無法進入全螢幕。");
+            return;
+        }
+
+        _fsTransition = true;
+        try
+        {
+            _restoreState = WindowState == FormWindowState.Minimized ? FormWindowState.Normal : WindowState;
+            _restoreBounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            var screen = Screen.FromControl(this);
+
+            SuspendLayout();
+            _menu.Visible = _toolbar.Visible = _statusStrip.Visible = false;
+            _split.Panel1Collapsed = true;
+            if (WindowState != FormWindowState.Normal) WindowState = FormWindowState.Normal;
+            FormBorderStyle = FormBorderStyle.None;
+            Bounds = screen.Bounds;
+            _fullScreen = true;
+            _sidebarExpanded = false;
+            ResumeLayout(true);
+
+            _tabs.SelectedTab = page;
+            LayoutTabs();
+            ApplySidebarLayout();
+            foreach (var p in SessionPages()) p.SetRemoteFullScreen(true);
+            RefreshSidebarConnections();
+            RefreshSidebarSessions();
+            _edgeTimer.Start();
+            Activate();
+            page.Focus();
+        }
+        finally { _fsTransition = false; }
+    }
+
+    private void ExitFullScreen()
+    {
+        if (!_fullScreen || _fsTransition) return;
+        _fsTransition = true;
+        try
+        {
+            _edgeTimer.Stop();
+            _fullScreen = false;
+            _sidebarExpanded = false;
+            foreach (var p in SessionPages()) p.SetRemoteFullScreen(false);
+
+            SuspendLayout();
+            _sidebar.Visible = _sidebarHandle.Visible = false;
+            Padding = Padding.Empty;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            Bounds = _restoreBounds;
+            _menu.Visible = _toolbar.Visible = _statusStrip.Visible = true;
+            _split.Panel1Collapsed = false;
+            ResumeLayout(true);
+            if (_restoreState == FormWindowState.Maximized) WindowState = FormWindowState.Maximized;
+            LayoutTabs();
+            FocusActiveSession();
+        }
+        finally { _fsTransition = false; }
+    }
+
+    /// <summary>一般模式:分頁填滿容器;全螢幕:把頁籤列與邊框推到容器外,只露出遠端畫面</summary>
+    private void LayoutTabs()
+    {
+        var r = _sessionHost.ClientRectangle;
+        if (!_fullScreen)
+        {
+            _tabs.Bounds = r;
+            return;
+        }
+        var dr = _tabs.DisplayRectangle;
+        int extraW = _tabs.Width - dr.Width, extraH = _tabs.Height - dr.Height;
+        _tabs.Bounds = new Rectangle(-dr.X, -dr.Y, r.Width + extraW, r.Height + extraH);
+    }
+
+    private int SidebarWidth => LogicalToDeviceUnits(290);
+
+    private void ApplySidebarLayout()
+    {
+        if (!_fullScreen)
+        {
+            _sidebar.Visible = _sidebarHandle.Visible = false;
+            Padding = Padding.Empty;
+            return;
+        }
+        bool pinned = _store.Settings.SidebarPinned;
+        int w = SidebarWidth;
+        var cs = ClientSize;
+        Padding = pinned ? new Padding(w, 0, 0, 0) : Padding.Empty;
+        _sidebar.SetBounds(0, 0, w, cs.Height);
+        _sidebar.Visible = pinned || _sidebarExpanded;
+        _sidebar.SetPinned(pinned);
+
+        int hw = LogicalToDeviceUnits(14), hh = LogicalToDeviceUnits(64);
+        _sidebarHandle.SetBounds(0, (cs.Height - hh) / 2, hw, hh);
+        _sidebarHandle.Visible = !_sidebar.Visible;
+
+        _sidebar.BringToFront();
+        _sidebarHandle.BringToFront();
+        LayoutTabs();
+    }
+
+    private void ExpandSidebar()
+    {
+        if (!_fullScreen) return;
+        _sidebarExpanded = true;
+        _leaveSince = null;
+        RefreshSidebarSessions();
+        ApplySidebarLayout();
+    }
+
+    private void CollapseSidebar()
+    {
+        if (!_fullScreen) return;
+        _sidebarExpanded = false;
+        _edgeSince = null;
+        ApplySidebarLayout();
+        FocusActiveSession();
+    }
+
+    /// <summary>從側邊面板切換或開啟連線後:未固定時自動收合,並把鍵盤焦點交給遠端畫面</summary>
+    private void AfterSidebarAction()
+    {
+        if (_fullScreen && !_store.Settings.SidebarPinned) CollapseSidebar();
+        else FocusActiveSession();
+        RefreshSidebarSessions();
+    }
+
+    /// <summary>偵測滑鼠停在螢幕左緣 → 展開;離開面板 → 自動收合</summary>
+    private void OnEdgeTimer()
+    {
+        if (!_fullScreen || _store.Settings.SidebarPinned || WindowState == FormWindowState.Minimized || ActiveForm != this)
+        {
+            _edgeSince = null;
+            return;
+        }
+        var pos = Cursor.Position;
+        var b = Bounds;
+        var now = DateTime.Now;
+        if (!_sidebarExpanded)
+        {
+            bool atEdge = _store.Settings.SidebarHoverExpand && pos.X <= b.Left + 1 && pos.Y >= b.Top && pos.Y < b.Bottom;
+            if (!atEdge) { _edgeSince = null; return; }
+            _edgeSince ??= now;
+            if ((now - _edgeSince.Value).TotalMilliseconds >= 250) ExpandSidebar();
+        }
+        else
+        {
+            var area = _sidebar.RectangleToScreen(_sidebar.ClientRectangle);
+            area.Inflate(LogicalToDeviceUnits(24), 0);
+            if (area.Contains(pos) || _sidebar.ContainsFocus) { _leaveSince = null; return; }
+            _leaveSince ??= now;
+            if ((now - _leaveSince.Value).TotalMilliseconds >= 600) CollapseSidebar();
+        }
+    }
+
+    private void MoveToNextScreen()
+    {
+        if (!_fullScreen) return;
+        var screens = Screen.AllScreens;
+        if (screens.Length < 2) return;
+        var current = Screen.FromControl(this);
+        int i = Array.IndexOf(screens, screens.First(s => s.DeviceName == current.DeviceName));
+        Bounds = screens[(i + 1) % screens.Length].Bounds;
+        ApplySidebarLayout();
+        FocusActiveSession();
+    }
+
+    private void FocusActiveSession()
+    {
+        if (_tabs.SelectedTab is RdpSessionPage p) BeginInvoke(new MethodInvoker(p.Focus));
+    }
+
+    private void RefreshSidebarSessions()
+    {
+        if (!_fullScreen) return;
+        _sidebar.SetSessions(SessionPages().ToList(), _tabs.SelectedTab as RdpSessionPage);
+    }
+
+    private void RefreshSidebarConnections()
+    {
+        if (_fullScreen) _sidebar.SetConnections(_store.Connections);
+    }
+
+    protected override void OnActivated(EventArgs e)
+    {
+        base.OnActivated(e);
+        // 從工作列 / Alt+Tab 回來時,把鍵盤交還給遠端畫面
+        if (_fullScreen && !_sidebar.ContainsFocus) FocusActiveSession();
+    }
+
+    protected override void OnClientSizeChanged(EventArgs e)
+    {
+        base.OnClientSizeChanged(e);
+        if (_fullScreen && !_fsTransition && WindowState != FormWindowState.Minimized) ApplySidebarLayout();
     }
 
     private void ShowTabMenu(RdpSessionPage page, Point location)
     {
         var m = new ContextMenuStrip();
         m.Items.Add(Item("重新連線", Keys.None, (_, _) => page.Connect()));
-        m.Items.Add(Item("全螢幕", Keys.None, (_, _) => page.EnterFullScreen()));
+        m.Items.Add(Item("全螢幕", Keys.None, (_, _) => { _tabs.SelectedTab = page; EnterFullScreen(); }));
         m.Items.Add(Item("改用外部 mstsc 開啟", Keys.None, (_, _) => { CloseSession(page, false); Connect(page.Connection, LaunchMode.External); }));
         if (!_store.Connections.Contains(page.Connection))
             m.Items.Add(Item("儲存為連線...", Keys.None, (_, _) => SaveQuickConnection(page.Connection)));
@@ -481,8 +775,8 @@ public class MainForm : Form
     private void SaveWindowState()
     {
         var s = _store.Settings;
-        s.WindowMaximized = WindowState == FormWindowState.Maximized;
-        var b = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+        s.WindowMaximized = _fullScreen ? _restoreState == FormWindowState.Maximized : WindowState == FormWindowState.Maximized;
+        var b = _fullScreen ? _restoreBounds : WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
         s.WindowX = b.X; s.WindowY = b.Y; s.WindowWidth = b.Width; s.WindowHeight = b.Height;
         s.SplitterDistance = _split.SplitterDistance;
         try { _store.SaveSettings(); } catch { /* ignore */ }
@@ -633,6 +927,7 @@ public class MainForm : Form
         catch (Exception ex) { ShowError("儲存失敗", ex); }
         RefreshTree();
         RefreshList(selectIds);
+        RefreshSidebarConnections();
     }
 
     private static string StatusText(RdpConnection c) => c.Status switch
@@ -645,6 +940,7 @@ public class MainForm : Form
 
     private void UpdateStatusFor(RdpConnection c)
     {
+        if (_fullScreen) _sidebar.InvalidateStatus();
         foreach (ListViewItem item in _list.Items)
         {
             if (item.Tag != c) continue;
@@ -861,6 +1157,8 @@ public class MainForm : Form
             if (existing != null)
             {
                 _tabs.SelectedTab = existing;
+                if (WantsFullScreen(c)) EnterFullScreen();
+                FocusActiveSession();
                 return;
             }
         }
@@ -877,7 +1175,7 @@ public class MainForm : Form
         {
             try
             {
-                ExternalLauncher.Launch(c, password);
+                ExternalLauncher.Launch(c, password, WantsFullScreen(c));
                 AddHistory(c, "外部", "啟動 mstsc", "");
                 SetMessage($"已以 mstsc 開啟「{c.Name}」");
             }
@@ -889,16 +1187,27 @@ public class MainForm : Form
         }
         else
         {
-            var page = new RdpSessionPage(c, password);
+            var page = new RdpSessionPage(c, password) { KeyboardHookMode = _store.Settings.KeyboardHookMode };
             page.StateChanged += p =>
             {
                 if (_tabs.SelectedTab == p) SetMessage($"{p.Connection.Name}:{p.LastMessage.Replace('\n', ' ')}");
                 UpdateCount();
+                RefreshSidebarSessions();
             };
             page.SessionEvent += (p, evt, detail) => AddHistory(p.Connection, "內嵌", evt, detail);
             page.CloseRequested += p => CloseSession(p, false);
+            // 遠端按 Ctrl+Alt+Break 等:由本程式切換全螢幕 (延後執行,不在 ActiveX 事件中改視窗樣式)
+            page.FullScreenRequested += (p, on) => BeginInvoke(new MethodInvoker(() =>
+            {
+                if (on) { _tabs.SelectedTab = p; EnterFullScreen(); }
+                else ExitFullScreen();
+            }));
+            page.MinimizeRequested += _ => BeginInvoke(new MethodInvoker(() => WindowState = FormWindowState.Minimized));
             _tabs.TabPages.Add(page);
             _tabs.SelectedTab = page;
+            // 先切換全螢幕,讓遠端解析度直接符合整個螢幕
+            if (WantsFullScreen(c)) EnterFullScreen();
+            if (_fullScreen) page.SetRemoteFullScreen(true);
             try
             {
                 page.Connect();
@@ -908,18 +1217,23 @@ public class MainForm : Form
             {
                 _tabs.TabPages.Remove(page);
                 page.Dispose();
+                if (_fullScreen && !SessionPages().Any()) ExitFullScreen();
                 AddHistory(c, "內嵌", "連線失敗", ex.Message);
                 if (MessageBox.Show(this, $"內嵌遠端桌面元件無法啟動:\n{ex.Message}\n\n要改用外部 mstsc 連線嗎?", "連線失敗",
                         MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
                 {
-                    try { ExternalLauncher.Launch(c, password); } catch (Exception ex2) { ShowError("無法啟動 mstsc", ex2); }
+                    try { ExternalLauncher.Launch(c, password, WantsFullScreen(c)); } catch (Exception ex2) { ShowError("無法啟動 mstsc", ex2); }
                 }
             }
         }
 
         if (_tabs.SelectedTab == _listPage || mode == LaunchMode.External) RefreshList();
         UpdateCount();
+        RefreshSidebarSessions();
     }
+
+    private bool WantsFullScreen(RdpConnection c) =>
+        _store.Settings.AlwaysFullScreen || c.ScreenMode == ScreenMode.FullScreen;
 
     private void CloseSession(RdpSessionPage page, bool confirm)
     {
@@ -932,8 +1246,21 @@ public class MainForm : Form
         page.Disconnect();
         _tabs.TabPages.Remove(page);
         page.Dispose();
-        if (_tabs.TabCount > 0) _tabs.SelectedIndex = Math.Clamp(idx - 1, 0, _tabs.TabCount - 1);
+        var remaining = SessionPages().ToList();
+        if (_fullScreen && remaining.Count == 0)
+        {
+            ExitFullScreen();
+            _tabs.SelectedTab = _listPage;
+        }
+        else if (_fullScreen)
+        {
+            // 全螢幕中關閉時,切到相鄰的工作階段
+            _tabs.SelectedTab = remaining[Math.Clamp(idx - 2, 0, remaining.Count - 1)];
+            FocusActiveSession();
+        }
+        else if (_tabs.TabCount > 0) _tabs.SelectedIndex = Math.Clamp(idx - 1, 0, _tabs.TabCount - 1);
         UpdateCount();
+        RefreshSidebarSessions();
     }
 
     private void CloseAllSessions()
@@ -1167,8 +1494,10 @@ public class MainForm : Form
         "Ctrl+H\t連線紀錄\n" +
         "Ctrl+I\t匯入\n" +
         "Ctrl+L\t回到連線清單\n" +
-        "F11\t工作階段全螢幕\n" +
+        "F11\t全螢幕 / 視窗模式切換\n" +
+        "Ctrl+Alt+Break\t在遠端畫面中切換全螢幕 / 視窗\n" +
         "Ctrl+W / 中鍵\t關閉工作階段分頁\n\n" +
+        "全螢幕時:滑鼠移到螢幕左緣 (或點左側小把手) 展開工作階段面板,可切換電腦、縮小或回到視窗模式。\n" +
         "提示:可將清單中的連線拖曳到左側群組,或把 .rdp/.csv/.json 檔拖曳到清單匯入。",
         "快捷鍵一覽", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
@@ -1178,6 +1507,7 @@ public class MainForm : Form
         {
             _tray.Dispose();
             _autoCheckTimer.Dispose();
+            _edgeTimer.Dispose();
             _statusImages.Dispose();
         }
         base.Dispose(disposing);

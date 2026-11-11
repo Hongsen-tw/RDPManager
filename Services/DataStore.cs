@@ -10,8 +10,20 @@ namespace RDPManager.Services;
 /// <summary>以 JSON 檔案儲存連線、設定與連線紀錄 (%AppData%\RDPManager)</summary>
 public class DataStore
 {
-    public static readonly string DataDir =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RDPManager");
+    /// <summary>
+    /// 資料夾位置 (依序):環境變數 RDPMANAGER_DATA → 程式旁的 data 資料夾 (可攜模式,例如放在隨身碟)
+    /// → %AppData%\RDPManager
+    /// </summary>
+    public static readonly string DataDir = ResolveDataDir();
+
+    private static string ResolveDataDir()
+    {
+        var env = Environment.GetEnvironmentVariable("RDPMANAGER_DATA");
+        if (!string.IsNullOrWhiteSpace(env)) return Path.GetFullPath(env);
+        var portable = Path.Combine(AppContext.BaseDirectory, "data");
+        if (Directory.Exists(portable)) return portable;
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RDPManager");
+    }
     public static string BackupDir => Path.Combine(DataDir, "backups");
     private static string ConnectionsPath => Path.Combine(DataDir, "connections.json");
     private static string SettingsPath => Path.Combine(DataDir, "settings.json");

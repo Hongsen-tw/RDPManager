@@ -16,6 +16,16 @@ public class AppSettings
     public bool ReuseOpenSession { get; set; } = true;
     public bool DailyAutoBackup { get; set; } = true;
 
+    // 全螢幕
+    /// <summary>所有連線一律以全螢幕開啟 (預設開啟)</summary>
+    public bool AlwaysFullScreen { get; set; } = true;
+    /// <summary>Windows 組合鍵 (Alt+Tab 等):0 = 本機、1 = 一律遠端、2 = 僅全螢幕時遠端</summary>
+    public int KeyboardHookMode { get; set; } = 2;
+    /// <summary>全螢幕側邊面板固定顯示</summary>
+    public bool SidebarPinned { get; set; }
+    /// <summary>滑鼠移到螢幕左緣時自動展開側邊面板</summary>
+    public bool SidebarHoverExpand { get; set; } = true;
+
     // 視窗狀態
     public int WindowX { get; set; } = -1;
     public int WindowY { get; set; } = -1;

@@ -20,6 +20,10 @@ public class RdpClientControl : AxHost
     public event EventHandler? LoginComplete;
     public event EventHandler<int>? Disconnected;
     public event EventHandler<int>? FatalError;
+    /// <summary>ContainerHandledFullScreen 模式下,控制項要求容器進入全螢幕 (例如遠端按 Ctrl+Alt+Break)</summary>
+    public event EventHandler? RequestGoFullScreen;
+    public event EventHandler? RequestLeaveFullScreen;
+    public event EventHandler? RequestContainerMinimize;
 
     public RdpClientControl() : base(RdpClientClsid) { }
 
@@ -50,6 +54,9 @@ public class RdpClientControl : AxHost
     internal void RaiseLoginComplete() => LoginComplete?.Invoke(this, EventArgs.Empty);
     internal void RaiseDisconnected(int reason) => Disconnected?.Invoke(this, reason);
     internal void RaiseFatalError(int code) => FatalError?.Invoke(this, code);
+    internal void RaiseRequestGoFullScreen() => RequestGoFullScreen?.Invoke(this, EventArgs.Empty);
+    internal void RaiseRequestLeaveFullScreen() => RequestLeaveFullScreen?.Invoke(this, EventArgs.Empty);
+    internal void RaiseRequestContainerMinimize() => RequestContainerMinimize?.Invoke(this, EventArgs.Empty);
 }
 
 /// <summary>mstscax 事件介面 (dispinterface IMsTscAxEvents)</summary>
@@ -62,7 +69,10 @@ public interface IMsTscAxEvents
     [DispId(2)] void OnConnected();
     [DispId(3)] void OnLoginComplete();
     [DispId(4)] void OnDisconnected(int discReason);
+    [DispId(8)] void OnRequestGoFullScreen();
+    [DispId(9)] void OnRequestLeaveFullScreen();
     [DispId(10)] void OnFatalError(int errorCode);
+    [DispId(14)] void OnRequestContainerMinimize();
 }
 
 [ComVisible(true)]
@@ -77,4 +87,7 @@ public sealed class RdpEventSink : IMsTscAxEvents
     public void OnLoginComplete() => _owner.RaiseLoginComplete();
     public void OnDisconnected(int discReason) => _owner.RaiseDisconnected(discReason);
     public void OnFatalError(int errorCode) => _owner.RaiseFatalError(errorCode);
+    public void OnRequestGoFullScreen() => _owner.RaiseRequestGoFullScreen();
+    public void OnRequestLeaveFullScreen() => _owner.RaiseRequestLeaveFullScreen();
+    public void OnRequestContainerMinimize() => _owner.RaiseRequestContainerMinimize();
 }
