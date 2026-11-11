@@ -19,7 +19,7 @@ public class SettingsForm : Form
     private readonly CheckBox _chkConfirm = new() { Text = "刪除連線前確認", AutoSize = true };
     private readonly CheckBox _chkBackup = new() { Text = "每天自動備份連線清單", AutoSize = true };
     private readonly CheckBox _chkFull = new() { Text = "所有連線一律以全螢幕開啟", AutoSize = true };
-    private readonly CheckBox _chkHover = new() { Text = "全螢幕時滑鼠移到螢幕左緣,自動展開側邊面板", AutoSize = true };
+    private readonly CheckBox _chkHover = new() { Text = "全螢幕時滑鼠停在左側小把手上,自動展開側邊面板", AutoSize = true };
     private readonly ComboBox _cboKeys = DropList("僅全螢幕時傳送到遠端", "一律傳送到遠端", "保留在本機");
     private static readonly int[] KeyModes = { 2, 1, 0 };
     private readonly CheckBox _chkRemember = new() { Text = "新連線預設「記住密碼」", AutoSize = true };

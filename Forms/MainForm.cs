@@ -36,6 +36,7 @@ public class MainForm : Form
     private Rectangle _restoreBounds;
     private FormWindowState _restoreState;
     private DateTime? _edgeSince;
+    private bool _suppressHoverUntilLeave;
     private DateTime? _leaveSince;
     private readonly TabPage _listPage = new("  連線清單  ");
     private readonly ListView _list = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, HideSelection = false, MultiSelect = true, AllowDrop = true, BorderStyle = BorderStyle.None };
@@ -396,6 +397,7 @@ public class MainForm : Form
             if (e.Button != MouseButtons.Left) return;
             _handleDragging = true;
             _handleMoved = false;
+            _edgeSince = null;
             _handleDownScreenY = _sidebarHandle.PointToScreen(e.Location).Y;
             _handleStartTop = _sidebarHandle.Top;
         };
@@ -414,13 +416,18 @@ public class MainForm : Form
             _handleDragging = false;
             _sidebarHandle.Cursor = Cursors.Hand;
             if (!_handleMoved || ClientSize.Height <= 0) return;
+            // 剛拖曳完,滑鼠仍停在把手上:先不要自動展開,等滑鼠離開把手再恢復
+            _suppressHoverUntilLeave = true;
+            _edgeSince = null;
             _store.Settings.SidebarHandlePosition =
                 Math.Clamp((_sidebarHandle.Top + _sidebarHandle.Height / 2.0) / ClientSize.Height, 0, 1);
             try { _store.SaveSettings(); } catch { /* ignore */ }
         };
         _sidebarHandle.Click += (_, _) =>
         {
-            if (_handleMoved) { _handleMoved = false; return; } // 剛拖曳完,不展開
+            // 剛拖曳完不展開。注意:放開滑鼠時 Button 會先觸發 Click 再觸發 MouseUp,
+            // 所以這裡不能重設 _handleMoved (MouseUp 還要用它儲存位置);下次 MouseDown 會重設
+            if (_handleMoved) return;
             ExpandSidebar();
         };
         new ToolTip().SetToolTip(_sidebarHandle, "點一下展開工作階段面板\n上下拖曳可移動位置");
@@ -606,7 +613,17 @@ public class MainForm : Form
         RefreshSidebarSessions();
     }
 
-    /// <summary>偵測滑鼠停在螢幕左緣 → 展開;離開面板 → 自動收合</summary>
+    /// <summary>滑鼠停在左側小把手上多久才自動展開 (留時間給「按住拖曳」)</summary>
+    private const int HoverExpandDelayMs = 600;
+
+    // 測試用:可替換游標位置 / 滑鼠按鍵來源
+    internal Func<Point> CursorProvider = () => Cursor.Position;
+    internal Func<MouseButtons> MouseButtonsProvider = () => Control.MouseButtons;
+
+    /// <summary>
+    /// 滑鼠停在左側小把手上 (螢幕左緣、把手的高度範圍內) → 展開;離開面板 → 自動收合。
+    /// 拖曳把手時、按住滑鼠鍵時、或剛拖曳完 (滑鼠尚未離開把手) 都不會自動展開。
+    /// </summary>
     private void OnEdgeTimer()
     {
         if (!_fullScreen || _store.Settings.SidebarPinned || WindowState == FormWindowState.Minimized || ActiveForm != this)
@@ -614,15 +631,28 @@ public class MainForm : Form
             _edgeSince = null;
             return;
         }
-        var pos = Cursor.Position;
+        var pos = CursorProvider();
         var b = Bounds;
         var now = DateTime.Now;
         if (!_sidebarExpanded)
         {
-            bool atEdge = _store.Settings.SidebarHoverExpand && pos.X <= b.Left + 1 && pos.Y >= b.Top && pos.Y < b.Bottom;
-            if (!atEdge) { _edgeSince = null; return; }
+            if (!_store.Settings.SidebarHoverExpand || !_sidebarHandle.Visible) { _edgeSince = null; return; }
+            // 感應範圍:從螢幕最左緣到把手右側、把手的上下範圍內
+            var hr = _sidebarHandle.RectangleToScreen(_sidebarHandle.ClientRectangle);
+            var hot = Rectangle.FromLTRB(b.Left, hr.Top, hr.Right, hr.Bottom);
+            if (!hot.Contains(pos))
+            {
+                _edgeSince = null;
+                _suppressHoverUntilLeave = false; // 離開把手後,恢復自動展開
+                return;
+            }
+            if (_handleDragging || _suppressHoverUntilLeave || MouseButtonsProvider() != MouseButtons.None)
+            {
+                _edgeSince = null;
+                return;
+            }
             _edgeSince ??= now;
-            if ((now - _edgeSince.Value).TotalMilliseconds >= 250) ExpandSidebar();
+            if ((now - _edgeSince.Value).TotalMilliseconds >= HoverExpandDelayMs) ExpandSidebar();
         }
         else
         {
@@ -1630,7 +1660,7 @@ public class MainForm : Form
         "F11\t全螢幕 / 視窗模式切換\n" +
         "Ctrl+Alt+Break\t在遠端畫面中切換全螢幕 / 視窗\n" +
         "Ctrl+W / 中鍵\t關閉工作階段分頁\n\n" +
-        "全螢幕時:滑鼠移到螢幕左緣 (或點左側小把手) 展開工作階段面板,可切換電腦、縮小或回到視窗模式。\n" +
+        "全螢幕時:滑鼠停在左側小把手上 (或點一下) 展開工作階段面板,可切換電腦、縮小或回到視窗模式;按住小把手上下拖曳可移動位置。\n" +
         "提示:可將清單中的連線拖曳到左側群組,或把 .rdp/.csv/.json 檔拖曳到清單匯入。",
         "快捷鍵一覽", MessageBoxButtons.OK, MessageBoxIcon.Information);
 

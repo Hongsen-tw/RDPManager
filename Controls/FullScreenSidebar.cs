@@ -170,7 +170,7 @@ public class FullScreenSidebar : Panel
             Dock = DockStyle.Bottom, Height = S(40), ForeColor = Gray, BackColor = Color.FromArgb(22, 23, 26),
             Padding = new Padding(S(10), S(2), S(6), S(4)),
             Font = new Font("Microsoft JhengHei UI", 8.5F),
-            Text = "滑鼠移到螢幕左緣可展開此面板\nCtrl+Alt+Break:切換全螢幕 / 視窗",
+            Text = "滑鼠停在左側小把手上 (或點一下) 可展開此面板\nCtrl+Alt+Break:切換全螢幕 / 視窗",
         };
 
         // Dock 順序:先加 Fill,再由下往上加 Top,最後加 Bottom

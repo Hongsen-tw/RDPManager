@@ -33,7 +33,7 @@ public class AppSettings
     public int KeyboardHookMode { get; set; } = 2;
     /// <summary>全螢幕側邊面板固定顯示</summary>
     public bool SidebarPinned { get; set; }
-    /// <summary>滑鼠移到螢幕左緣時自動展開側邊面板</summary>
+    /// <summary>滑鼠停在左側小把手上時自動展開側邊面板</summary>
     public bool SidebarHoverExpand { get; set; } = true;
     /// <summary>全螢幕左側小把手的垂直位置 (0 = 最上方、0.5 = 中間、1 = 最下方)</summary>
     public double SidebarHandlePosition { get; set; } = 0.5;
