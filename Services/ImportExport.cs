@@ -9,7 +9,7 @@ namespace RDPManager.Services;
 public static class ImportExport
 {
     private static readonly string[] CsvHeaders =
-        { "Name", "Host", "Port", "Username", "Domain", "Group", "Notes", "MacAddress", "Favorite" };
+        { "Name", "Host", "Port", "Username", "Domain", "Group", "Notes", "MacAddress", "Favorite", "Protocol" };
 
     // ---------- JSON ----------
     /// <summary>匯出 JSON (不含密碼,因為 DPAPI 加密的密碼無法在其他電腦解密)</summary>
@@ -32,7 +32,7 @@ public static class ImportExport
             sb.AppendLine(string.Join(",", new[]
             {
                 c.Name, c.Host, c.Port.ToString(), c.Username, c.Domain, c.Group, c.Notes, c.MacAddress,
-                c.IsFavorite ? "1" : "0",
+                c.IsFavorite ? "1" : "0", c.ProtocolName,
             }.Select(Esc)));
         }
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true)); // 含 BOM,Excel 開啟中文不亂碼
@@ -49,7 +49,8 @@ public static class ImportExport
         int iName = Col("name", "名稱"), iHost = Col("host", "ip", "address", "主機", "位址"),
             iPort = Col("port", "連接埠"), iUser = Col("username", "user", "使用者"),
             iDomain = Col("domain", "網域"), iGroup = Col("group", "群組"), iNotes = Col("notes", "備註"),
-            iMac = Col("macaddress", "mac"), iFav = Col("favorite", "我的最愛");
+            iMac = Col("macaddress", "mac"), iFav = Col("favorite", "我的最愛"),
+            iProto = Col("protocol", "type", "類型");
         if (iHost < 0) throw new InvalidDataException("CSV 缺少 Host 欄位");
 
         string Get(List<string> r, int i) => i >= 0 && i < r.Count ? r[i].Trim() : "";
@@ -57,11 +58,15 @@ public static class ImportExport
         foreach (var r in rows.Skip(1))
         {
             var hostText = Get(r, iHost);
-            if (!AddressParser.TryParse(hostText, out var host, out var port)) continue;
+            bool vnc = Get(r, iProto).Equals("VNC", StringComparison.OrdinalIgnoreCase)
+                       | AddressParser.StripVncPrefix(hostText, out hostText);
+            if (!AddressParser.TryParse(hostText, out var host, out var port,
+                    vnc ? AddressParser.DefaultVncPort : AddressParser.DefaultPort)) continue;
             if (int.TryParse(Get(r, iPort), out var p) && p is > 0 and < 65536) port = p;
             var name = Get(r, iName);
             result.Add(new RdpConnection
             {
+                Protocol = vnc ? ConnectionProtocol.Vnc : ConnectionProtocol.Rdp,
                 Name = name.Length > 0 ? name : host,
                 Host = host,
                 Port = port,

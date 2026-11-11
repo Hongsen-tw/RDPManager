@@ -5,7 +5,7 @@
 <h1 align="center">RDP 遠端連線管理員</h1>
 
 <p align="center">
-  集中管理 Windows 遠端桌面 (RDP) 連線：儲存 IP 與名稱、快速搜尋、一鍵連線<br>
+  集中管理 Windows 遠端桌面 (RDP) 與 VNC 連線：儲存 IP 與名稱、快速搜尋、一鍵連線<br>
   <b>鴻森智能科技股份有限公司</b>
 </p>
 
@@ -28,6 +28,7 @@
 | 密碼 | **預設不儲存**，連線前才詢問 (可臨時改用其他帳號)；勾選「記住密碼」才會加密儲存 |
 | 快速尋找 | 即時搜尋 (名稱 / IP / 使用者 / 群組 / 備註，可用空白分隔多個關鍵字)；左側分類：全部、我的最愛、最近使用、群組；點欄位標題排序 |
 | 兩種連線方式 | **內嵌分頁**：在程式內同時開多個遠端桌面<br>**外部 mstsc**：使用 Windows 內建遠端桌面視窗 |
+| VNC 連線 | 連線類型可選 **VNC**，以 **UltraVNC Viewer** 開啟 (自動偵測安裝位置)；支援全螢幕、自動縮放、僅檢視、MS-Logon；快速連線輸入 `vnc://IP` |
 | 全螢幕工作區 | **預設全螢幕連線**；滑鼠移到螢幕左緣即展開**側邊面板**，可切換電腦、開啟其他連線、縮小或回到視窗模式；面板可收合或固定；縮小後點工作列即回到全螢幕；支援 Ctrl+Alt+Break 與多螢幕 |
 | 內嵌工作階段 | 視窗縮放時自動調整遠端解析度、中斷時顯示原因並可一鍵重新連線 |
 | 快速連線 | 在工具列直接輸入 IP 即可連線，之後可另存為連線 |
@@ -41,10 +42,10 @@
 
 ## 下載與安裝
 
-1. 從 [Releases](../../releases/latest) 下載 `RDPManager-v1.2.0-win-x64.zip`。
+1. 從 [Releases](../../releases/latest) 下載 `RDPManager-v1.3.0-win-x64.zip`。
 2. 解壓縮後執行 `RDPManager.exe`。不需要安裝 .NET。
 
-系統需求：Windows 10 / 11 (64 位元)。
+系統需求：Windows 10 / 11 (64 位元)。VNC 連線需另外安裝 [UltraVNC](https://uvnc.com) Viewer。
 
 詳細操作請參考 **[使用手冊](docs/USER_MANUAL.md)** (Release 也有 PDF 版)。
 
@@ -54,6 +55,7 @@
 - 已儲存的密碼使用 **Windows DPAPI** 以目前的 Windows 帳戶加密，只有同一台電腦上的同一個帳戶能解密。
 - 匯出檔 (JSON / CSV / .rdp) **不包含密碼**。
 - 外部 mstsc 自動登入時，帳密會暫存在 Windows 認證管理員。密碼未儲存時，mstsc 讀取後就會刪除；已儲存的則保留到登出 Windows。
+- VNC：一般 VNC 連線**沒有加密**，請只在內網或 VPN 中使用；密碼會以命令列參數傳給 UltraVNC Viewer。
 
 資料位置：`%AppData%\RDPManager\` (或 exe 旁的 `data` 資料夾)
 
@@ -91,6 +93,7 @@ Services/
   PasswordProtector.cs        DPAPI 密碼加密
   CredentialManager.cs        Windows 認證管理員 (外部 mstsc 自動登入)
   ExternalLauncher.cs         產生 .rdp 並啟動 mstsc
+  VncLauncher.cs              以 UltraVNC Viewer 開啟 VNC 連線
   ImportExport.cs             JSON / CSV / .rdp 匯入匯出
   NetworkTools.cs             連接埠狀態檢查、Wake-on-LAN
   AddressParser.cs            解析 host:port / IPv6

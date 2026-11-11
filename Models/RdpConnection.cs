@@ -16,11 +16,16 @@ public enum AudioMode { Local = 0, Remote = 1, None = 2 }
 
 public enum HostStatus { Unknown, Checking, Online, Offline }
 
+/// <summary>連線類型</summary>
+public enum ConnectionProtocol { Rdp, Vnc }
+
 public class RdpConnection
 {
     public Guid Id { get; set; } = Guid.NewGuid();
 
     // 一般
+    /// <summary>RDP (預設) 或 VNC (以 UltraVNC Viewer 開啟)</summary>
+    public ConnectionProtocol Protocol { get; set; } = ConnectionProtocol.Rdp;
     public string Name { get; set; } = "";
     public string Host { get; set; } = "";
     public int Port { get; set; } = 3389;
@@ -50,6 +55,8 @@ public class RdpConnection
     public bool AdminSession { get; set; }
     public LaunchMode LaunchMode { get; set; } = LaunchMode.Default;
     public string MacAddress { get; set; } = "";
+    /// <summary>VNC:僅檢視 (不傳送鍵盤滑鼠)</summary>
+    public bool VncViewOnly { get; set; }
 
     // 統計
     public DateTime CreatedAt { get; set; } = DateTime.Now;
@@ -60,7 +67,11 @@ public class RdpConnection
     [JsonIgnore] public HostStatus Status { get; set; } = HostStatus.Unknown;
     [JsonIgnore] public long? LatencyMs { get; set; }
 
-    [JsonIgnore] public string DisplayAddress => AddressParser.Format(Host, Port);
+    [JsonIgnore] public bool IsVnc => Protocol == ConnectionProtocol.Vnc;
+    [JsonIgnore] public int DefaultPort => IsVnc ? AddressParser.DefaultVncPort : AddressParser.DefaultPort;
+    [JsonIgnore] public string ProtocolName => IsVnc ? "VNC" : "RDP";
+
+    [JsonIgnore] public string DisplayAddress => AddressParser.Format(Host, Port, DefaultPort);
 
     [JsonIgnore]
     public string FullUserName =>

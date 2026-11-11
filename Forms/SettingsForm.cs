@@ -24,11 +24,13 @@ public class SettingsForm : Form
     private static readonly int[] KeyModes = { 2, 1, 0 };
     private readonly CheckBox _chkRemember = new() { Text = "新連線預設「記住密碼」", AutoSize = true };
     private readonly CheckBox _chkAsk = new() { Text = "未儲存密碼時,連線前詢問帳號密碼", AutoSize = true };
+    private readonly TextBox _txtVnc = new() { Width = 180, PlaceholderText = "空白 = 自動偵測" };
+    private readonly Label _lblVnc = new() { AutoSize = true, MaximumSize = new Size(360, 0) };
 
     public SettingsForm(AppSettings settings)
     {
         _s = settings;
-        SetupDialog(this, "設定", new Size(500, 610));
+        SetupDialog(this, "設定", new Size(540, 690));
 
         var t = NewTable();
         AddRow(t, "預設連線方式", _cboLaunch);
@@ -39,6 +41,19 @@ public class SettingsForm : Form
         AddRow(t, "密碼", _chkAsk, false);
         AddRow(t, "", _chkRemember, false);
         AddRow(t, "", new Label { Text = "(預設不儲存密碼;個別連線可在編輯視窗勾選「記住密碼」)", AutoSize = true, ForeColor = SystemColors.GrayText }, false);
+        var btnBrowse = new Button { Text = "瀏覽…", AutoSize = true };
+        var btnDetect = new Button { Text = "自動偵測", AutoSize = true };
+        btnBrowse.Click += (_, _) =>
+        {
+            using var dlg = new OpenFileDialog { Title = "選擇 UltraVNC Viewer", Filter = "vncviewer.exe|vncviewer.exe|程式 (*.exe)|*.exe" };
+            if (dlg.ShowDialog(this) == DialogResult.OK) { _txtVnc.Text = dlg.FileName; UpdateVncStatus(); }
+        };
+        btnDetect.Click += (_, _) => { _txtVnc.Text = VncLauncher.Detect() ?? ""; UpdateVncStatus(); };
+        _txtVnc.TextChanged += (_, _) => UpdateVncStatus();
+        AddRow(t, "UltraVNC Viewer", Flow(_txtVnc, btnBrowse, btnDetect), false);
+        var download = new LinkLabel { Text = "下載 UltraVNC", AutoSize = true };
+        download.LinkClicked += (_, _) => Process.Start(new ProcessStartInfo(VncLauncher.DownloadUrl) { UseShellExecute = true });
+        AddRow(t, "", Flow(_lblVnc, download), false);
         AddRow(t, "一般", _chkReuse, false);
         AddRow(t, "", _chkTray, false);
         AddRow(t, "", _chkConfirm, false);
@@ -69,6 +84,28 @@ public class SettingsForm : Form
         _chkAsk.Checked = settings.AskPasswordBeforeConnect;
         _chkHover.Checked = settings.SidebarHoverExpand;
         _cboKeys.SelectedIndex = Math.Max(0, Array.IndexOf(KeyModes, settings.KeyboardHookMode));
+        _txtVnc.Text = settings.UltraVncPath;
+        UpdateVncStatus();
+    }
+
+    private void UpdateVncStatus()
+    {
+        var path = VncLauncher.Resolve(_txtVnc.Text.Trim());
+        if (_txtVnc.Text.Trim().Length > 0 && !File.Exists(_txtVnc.Text.Trim()))
+        {
+            _lblVnc.ForeColor = Color.Firebrick;
+            _lblVnc.Text = "✖ 找不到此檔案";
+        }
+        else if (path != null)
+        {
+            _lblVnc.ForeColor = Color.ForestGreen;
+            _lblVnc.Text = _txtVnc.Text.Trim().Length > 0 ? "✔ 已設定" : "✔ 已自動偵測到:" + path;
+        }
+        else
+        {
+            _lblVnc.ForeColor = Color.DarkOrange;
+            _lblVnc.Text = "尚未安裝 UltraVNC Viewer (VNC 連線需要)";
+        }
     }
 
     private void Save()
@@ -82,6 +119,7 @@ public class SettingsForm : Form
         _s.ConfirmDelete = _chkConfirm.Checked;
         _s.DailyAutoBackup = _chkBackup.Checked;
         _s.AlwaysFullScreen = _chkFull.Checked;
+        _s.UltraVncPath = _txtVnc.Text.Trim();
         _s.RememberPasswordByDefault = _chkRemember.Checked;
         _s.AskPasswordBeforeConnect = _chkAsk.Checked;
         _s.SidebarHoverExpand = _chkHover.Checked;

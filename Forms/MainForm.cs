@@ -251,6 +251,7 @@ public class MainForm : Form
 
         _list.Columns.Add("狀態", 80);
         _list.Columns.Add("名稱", 200);
+        _list.Columns.Add("類型", 50);
         _list.Columns.Add("主機 / IP", 160);
         _list.Columns.Add("使用者", 160);
         _list.Columns.Add("群組", 110);
@@ -875,7 +876,8 @@ public class MainForm : Form
                 c.Host.Contains(t, StringComparison.OrdinalIgnoreCase) ||
                 c.Username.Contains(t, StringComparison.OrdinalIgnoreCase) ||
                 c.Group.Contains(t, StringComparison.OrdinalIgnoreCase) ||
-                c.Notes.Contains(t, StringComparison.OrdinalIgnoreCase)));
+                c.Notes.Contains(t, StringComparison.OrdinalIgnoreCase) ||
+                c.ProtocolName.Equals(t, StringComparison.OrdinalIgnoreCase)));
         }
         return q;
     }
@@ -890,12 +892,13 @@ public class MainForm : Form
             Func<RdpConnection, IComparable> key = _sortColumn switch
             {
                 0 => c => (long)c.Status * 1_000_000_000L + (c.LatencyMs ?? 999_999_999L),
-                2 => c => c.Host,
-                3 => c => c.FullUserName,
-                4 => c => c.Group,
-                5 => c => c.LastConnectedAt ?? DateTime.MinValue,
-                6 => c => c.ConnectCount,
-                7 => c => c.Notes,
+                2 => c => c.ProtocolName,
+                3 => c => c.Host,
+                4 => c => c.FullUserName,
+                5 => c => c.Group,
+                6 => c => c.LastConnectedAt ?? DateTime.MinValue,
+                7 => c => c.ConnectCount,
+                8 => c => c.Notes,
                 _ => c => c.Name,
             };
             items = (_sortAsc ? items.OrderBy(key) : items.OrderByDescending(key)).ToList();
@@ -907,6 +910,7 @@ public class MainForm : Form
         {
             var item = new ListViewItem(StatusText(c), c.Status.ToString()) { Tag = c };
             item.SubItems.Add((c.IsFavorite ? "★ " : "") + c.Name);
+            item.SubItems.Add(c.ProtocolName);
             item.SubItems.Add(c.DisplayAddress);
             item.SubItems.Add(c.FullUserName);
             item.SubItems.Add(c.Group);
@@ -1130,28 +1134,45 @@ public class MainForm : Form
 
     private void QuickConnect(string text)
     {
-        if (!AddressParser.TryParse(text, out var host, out var port))
+        // 「vnc://host[:port]」或「vnc:host」= VNC,其餘為 RDP
+        bool vnc = AddressParser.StripVncPrefix(text, out var address);
+        var protocol = vnc ? ConnectionProtocol.Vnc : ConnectionProtocol.Rdp;
+        if (!AddressParser.TryParse(address, out var host, out var port, vnc ? AddressParser.DefaultVncPort : AddressParser.DefaultPort))
         {
-            SetMessage("請輸入有效的 IP 或主機名稱,例如 192.168.1.10 或 server:3390");
+            SetMessage("請輸入有效的 IP 或主機名稱,例如 192.168.1.10、server:3390,VNC 請輸入 vnc://192.168.1.20");
             return;
         }
         var saved = _store.Connections.FirstOrDefault(c =>
-            c.Host.Equals(host, StringComparison.OrdinalIgnoreCase) && c.Port == port);
-        var conn = saved ?? new RdpConnection { Name = AddressParser.Format(host, port), Host = host, Port = port };
+            c.Host.Equals(host, StringComparison.OrdinalIgnoreCase) && c.Port == port && c.Protocol == protocol);
+        var conn = saved ?? new RdpConnection { Protocol = protocol, Host = host, Port = port };
+        if (saved == null) conn.Name = (vnc ? "VNC " : "") + conn.DisplayAddress;
         Connect(conn);
         _txtQuick.Clear();
-        if (saved == null) SetMessage("快速連線不會自動儲存,可在分頁上按右鍵「儲存為連線」。");
+        if (saved == null && !vnc) SetMessage("快速連線不會自動儲存,可在分頁上按右鍵「儲存為連線」。");
     }
 
     private void Connect(RdpConnection c, LaunchMode force = LaunchMode.Default)
     {
         if (string.IsNullOrWhiteSpace(c.Host)) return;
+
+        // VNC:以外部 UltraVNC Viewer 開啟,先確認已安裝 (避免輸入密碼後才發現無法開啟)
+        string? vncViewer = null;
+        if (c.IsVnc)
+        {
+            vncViewer = VncLauncher.Resolve(_store.Settings.UltraVncPath);
+            if (vncViewer == null)
+            {
+                ShowVncViewerMissing();
+                return;
+            }
+        }
+
         var mode = force != LaunchMode.Default ? force
                  : c.LaunchMode != LaunchMode.Default ? c.LaunchMode
                  : _store.Settings.DefaultLaunchMode;
         if (mode == LaunchMode.Default) mode = LaunchMode.Embedded;
 
-        if (mode == LaunchMode.Embedded && _store.Settings.ReuseOpenSession)
+        if (!c.IsVnc && mode == LaunchMode.Embedded && _store.Settings.ReuseOpenSession)
         {
             var existing = SessionPages().FirstOrDefault(p => p.Connection.Id == c.Id && p.IsActive);
             if (existing != null)
@@ -1193,7 +1214,21 @@ public class MainForm : Form
             try { _store.SaveConnections(); } catch { /* ignore */ }
         }
 
-        if (mode == LaunchMode.External)
+        if (c.IsVnc)
+        {
+            try
+            {
+                VncLauncher.Launch(vncViewer!, target, password, WantsFullScreen(c));
+                AddHistory(c, "VNC", "啟動 UltraVNC", "");
+                SetMessage($"已以 UltraVNC Viewer 開啟「{c.Name}」");
+            }
+            catch (Exception ex)
+            {
+                AddHistory(c, "VNC", "連線失敗", ex.Message);
+                ShowError("無法啟動 UltraVNC Viewer", ex);
+            }
+        }
+        else if (mode == LaunchMode.External)
         {
             try
             {
@@ -1250,9 +1285,24 @@ public class MainForm : Form
             }
         }
 
-        if (_tabs.SelectedTab == _listPage || mode == LaunchMode.External) RefreshList();
+        if (_tabs.SelectedTab == _listPage || mode == LaunchMode.External || c.IsVnc) RefreshList();
         UpdateCount();
         RefreshSidebarSessions();
+    }
+
+    private void ShowVncViewerMissing()
+    {
+        var r = MessageBox.Show(this,
+            "找不到 UltraVNC Viewer (vncviewer.exe),VNC 連線需要先安裝它。\n\n" +
+            "按「是」:開啟設定,指定 vncviewer.exe 的位置\n" +
+            "按「否」:開啟 UltraVNC 官方下載頁面",
+            "VNC 連線", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Information);
+        if (r == DialogResult.Yes) ShowSettings();
+        else if (r == DialogResult.No)
+        {
+            try { Process.Start(new ProcessStartInfo(VncLauncher.DownloadUrl) { UseShellExecute = true }); }
+            catch (Exception ex) { ShowError("無法開啟網頁", ex); }
+        }
     }
 
     private bool WantsFullScreen(RdpConnection c) =>
@@ -1450,6 +1500,11 @@ public class MainForm : Form
     {
         var c = SelectedConnections().FirstOrDefault();
         if (c == null) return;
+        if (c.IsVnc)
+        {
+            MessageBox.Show(this, "VNC 連線無法匯出為 .rdp 檔。", "匯出", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
         using var dlg = new SaveFileDialog { Filter = "遠端桌面檔 (*.rdp)|*.rdp", FileName = c.Name + ".rdp" };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         try { ExternalLauncher.SaveRdpFile(c, dlg.FileName); SetMessage("已匯出 " + dlg.FileName); }

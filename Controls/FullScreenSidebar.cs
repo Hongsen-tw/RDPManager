@@ -263,7 +263,8 @@ public class FullScreenSidebar : Panel
             HostStatus.Checking => Orange,
             _ => Gray,
         };
-        var sub = string.IsNullOrEmpty(c.Group) ? c.DisplayAddress : $"{c.Group}  ·  {c.DisplayAddress}";
+        var addr = c.IsVnc ? $"VNC  ·  {c.DisplayAddress}" : c.DisplayAddress;
+        var sub = string.IsNullOrEmpty(c.Group) ? addr : $"{c.Group}  ·  {addr}";
         DrawRow(e, bg, dot, (c.IsFavorite ? "★ " : "") + c.Name, sub, TextSub);
     }
 

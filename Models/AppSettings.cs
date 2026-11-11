@@ -22,6 +22,10 @@ public class AppSettings
     /// <summary>未儲存密碼時,連線前先詢問帳號密碼</summary>
     public bool AskPasswordBeforeConnect { get; set; } = true;
 
+    // VNC
+    /// <summary>UltraVNC Viewer (vncviewer.exe) 路徑;空白 = 自動偵測</summary>
+    public string UltraVncPath { get; set; } = "";
+
     // 全螢幕
     /// <summary>所有連線一律以全螢幕開啟 (預設開啟)</summary>
     public bool AlwaysFullScreen { get; set; } = true;

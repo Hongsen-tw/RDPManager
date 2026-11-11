@@ -12,6 +12,8 @@ public class ConnectionEditForm : Form
     private readonly RdpConnection _conn;
 
     // 一般
+    private readonly ComboBox _cboProtocol = DropList("RDP (Windows 遠端桌面)", "VNC (UltraVNC Viewer)");
+    private readonly CheckBox _chkViewOnly = new() { Text = "僅檢視,不控制遠端 (僅 VNC)", AutoSize = true };
     private readonly TextBox _txtName = new();
     private readonly TextBox _txtHost = new() { PlaceholderText = "IP 或主機名稱,例如 192.168.1.10 或 server01:3390" };
     private readonly NumericUpDown _numPort = new() { Minimum = 1, Maximum = 65535, Value = 3389, Width = 90 };
@@ -54,7 +56,7 @@ public class ConnectionEditForm : Form
     {
         _conn = conn;
         _rememberDefault = rememberDefault;
-        SetupDialog(this, title, new Size(540, 520));
+        SetupDialog(this, title, new Size(560, 580));
 
         var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(12, 4) };
         tabs.TabPages.Add(BuildGeneral(groups));
@@ -89,6 +91,7 @@ public class ConnectionEditForm : Form
         };
         _btnTest.Click += async (_, _) => await TestPortAsync();
 
+        AddRow(t, "連線類型", _cboProtocol, false);
         AddRow(t, "名稱", _txtName);
         AddRow(t, "主機 / IP *", _txtHost);
         AddRow(t, "連接埠", Flow(_numPort, _btnTest, _lblTest), false);
@@ -100,7 +103,8 @@ public class ConnectionEditForm : Form
         AddRow(t, "備註", _txtNotes);
         AddFull(t, new Label
         {
-            Text = "※ 預設不儲存密碼,每次連線時輸入。勾選「記住密碼」才會儲存,並以 Windows DPAPI 加密 (只有目前的 Windows 帳戶能解密)。",
+            Text = "※ 預設不儲存密碼,每次連線時輸入。勾選「記住密碼」才會儲存,並以 Windows DPAPI 加密 (只有目前的 Windows 帳戶能解密)。\n" +
+                   "※ VNC 一般只需要密碼 (傳統 VNC 密碼最多 8 個字元);使用 UltraVNC MS-Logon 時才需要填使用者名稱。",
             AutoSize = true, ForeColor = SystemColors.GrayText, MaximumSize = new Size(480, 0),
         });
         return new TabPage("一般") { Controls = { t }, Padding = new Padding(4) };
@@ -125,6 +129,7 @@ public class ConnectionEditForm : Form
         AddRow(t, "色彩深度", _cboColor, false);
         AddRow(t, "", _chkSmart, false);
         AddRow(t, "", _chkMulti, false);
+        AddRow(t, "", _chkViewOnly, false);
         return new TabPage("顯示") { Controls = { t } };
     }
 
@@ -163,6 +168,8 @@ public class ConnectionEditForm : Form
     private void LoadValues()
     {
         var c = _conn;
+        _cboProtocol.SelectedIndex = (int)c.Protocol;
+        _chkViewOnly.Checked = c.VncViewOnly;
         _txtName.Text = c.Name;
         _txtHost.Text = c.Host;
         _numPort.Value = Math.Clamp(c.Port, 1, 65535);
@@ -192,6 +199,29 @@ public class ConnectionEditForm : Form
         _cboLaunch.SelectedIndex = (int)c.LaunchMode;
         _chkAdmin.Checked = c.AdminSession;
         _txtMac.Text = c.MacAddress;
+
+        ApplyProtocol(adjustPort: false);
+        _cboProtocol.SelectedIndexChanged += (_, _) => ApplyProtocol(adjustPort: true);
+    }
+
+    private bool IsVnc => _cboProtocol.SelectedIndex == (int)ConnectionProtocol.Vnc;
+
+    /// <summary>依連線類型啟用 / 停用只適用於 RDP 或 VNC 的選項</summary>
+    private void ApplyProtocol(bool adjustPort)
+    {
+        bool vnc = IsVnc;
+        if (adjustPort)
+        {
+            if (vnc && _numPort.Value == AddressParser.DefaultPort) _numPort.Value = AddressParser.DefaultVncPort;
+            if (!vnc && _numPort.Value == AddressParser.DefaultVncPort) _numPort.Value = AddressParser.DefaultPort;
+        }
+        foreach (Control ctl in new Control[] { _txtDomain, _cboColor, _chkMulti, _chkDrives, _chkPrinters, _cboAudio, _cboLaunch, _chkAdmin })
+            ctl.Enabled = !vnc;
+        _chkViewOnly.Enabled = vnc;
+        _txtUser.PlaceholderText = vnc ? "選填 (UltraVNC MS-Logon 帳號)" : "";
+        _txtHost.PlaceholderText = vnc
+            ? "IP 或主機名稱,例如 192.168.1.20 或 pc01:5901"
+            : "IP 或主機名稱,例如 192.168.1.10 或 server01:3390";
     }
 
     private void UpdatePasswordEnabled()
@@ -219,6 +249,8 @@ public class ConnectionEditForm : Form
         }
 
         var c = _conn;
+        c.Protocol = (ConnectionProtocol)_cboProtocol.SelectedIndex;
+        c.VncViewOnly = _chkViewOnly.Checked;
         c.Host = host;
         c.Port = hostText.Contains(':') && !host.Contains(':') ? parsedPort : (int)_numPort.Value;
         c.Name = _txtName.Text.Trim().Length > 0 ? _txtName.Text.Trim() : host;

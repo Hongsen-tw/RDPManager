@@ -29,7 +29,7 @@ public class PasswordPromptForm : Form
         var t = NewTable();
         var title = new Label
         {
-            Text = $"{c.Name}\n{c.DisplayAddress}", AutoSize = true,
+            Text = $"{c.Name}\n{c.ProtocolName} · {c.DisplayAddress}", AutoSize = true,
             Font = new Font(UiFont, FontStyle.Bold), Margin = new Padding(3, 0, 3, 8),
         };
         AddFull(t, title);
@@ -47,7 +47,7 @@ public class PasswordPromptForm : Form
         _chkShow.CheckedChanged += (_, _) => _txtPassword.UseSystemPasswordChar = !_chkShow.Checked;
         _chkRemember.CheckedChanged += (_, _) => note.Visible = !_chkRemember.Checked;
         _txtUser.Text = c.FullUserName;
-        _txtUser.PlaceholderText = "例如 administrator 或 DOMAIN\\user";
+        _txtUser.PlaceholderText = c.IsVnc ? "VNC 通常不需要 (MS-Logon 才需要)" : "例如 administrator 或 DOMAIN\\user";
 
         var buttons = DialogButtons(this, out _, out _, "連線");
         Controls.Add(t);
@@ -55,7 +55,7 @@ public class PasswordPromptForm : Form
         Shown += (_, _) =>
         {
             Activate();
-            (_txtUser.Text.Length == 0 ? _txtUser : _txtPassword).Focus();
+            (_txtUser.Text.Length == 0 && !c.IsVnc ? _txtUser : _txtPassword).Focus();
         };
     }
 
